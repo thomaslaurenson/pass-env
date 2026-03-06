@@ -7,21 +7,20 @@ set -euo pipefail
 
 PASS_CMD="pass"  # in case you need to call back into pass
 
-ENTRY_DEFAULT="ldap/svr.openrc"  # sensible default, or require --entry
-
 die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
 
 help() {
   cat <<'EOF'
 Usage:
-  pass env print [--entry PATH] [--export]
-  pass env run [--entry PATH] -- COMMAND [ARGS...]
-  pass env set NAME VALUE [--entry PATH]
-  pass env unset NAME [--entry PATH]
-  pass env ls [--entry PATH]
+  pass env print --entry PATH [--export]
+  pass env run --entry PATH -- COMMAND [ARGS...]
+  pass env set NAME VALUE --entry PATH
+  pass env unset NAME --entry PATH
+  pass env ls --entry PATH
   pass env help
 
 Notes:
+  - The --entry PATH argument is required for all commands.
   - Entries contain either KEY=VALUE lines or export KEY=VALUE lines.
   - Use `print` with --export to force "export KEY=VALUE" output.
   - `run` loads variables only for the invoked COMMAND (safer).
@@ -79,11 +78,14 @@ run_with_env() {
   local entry="$1"; shift
   [ "$#" -ge 1 ] || die "run: missing COMMAND"
   # Build an env file for a subshell
-  # shellcheck disable=SC2155
-  local tmp="$(mktemp)"
+  local tmp
+  tmp="$(mktemp)"
+  # Ensure cleanup even if command fails
+  trap 'rm -f "$tmp"' EXIT
   print_entry "$entry" raw >"$tmp"
   # shellcheck disable=SC1090
-  ( set -a; . "$tmp"; rm -f "$tmp"; exec "$@" )
+  ( set -a; . "$tmp"; exec "$@" )
+  # trap will clean up on function exit
 }
 
 set_var() {
@@ -132,7 +134,8 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
   print)
-    mode="raw"; entry="$ENTRY_DEFAULT"
+    mode="raw"
+    entry=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --entry) entry="$2"; shift 2 ;;
@@ -140,10 +143,11 @@ case "$cmd" in
         *) break ;;
       esac
     done
+    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
     print_entry "$entry" "$mode"
     ;;
   run)
-    entry="$ENTRY_DEFAULT"
+    entry=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --entry) entry="$2"; shift 2 ;;
@@ -151,25 +155,32 @@ case "$cmd" in
         *) break ;;
       esac
     done
+    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
     run_with_env "$entry" "$@"
     ;;
   set)
-    name="${1:-}"; value="${2:-}"; shift 2 || true
-    if [ -z "${name:-}" ] || [ -z "${value:-}" ]; then die "usage: pass env set NAME VALUE [--entry PATH]"; fi
-    entry="$ENTRY_DEFAULT"
+    name="${1:-}"
+    value="${2:-}"
+    entry=""
+    shift 2 || true
+    if [ -z "${name:-}" ] || [ -z "${value:-}" ]; then die "usage: pass env set NAME VALUE --entry PATH"; fi
     [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
+    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
     set_var "$name" "$value" "$entry"
     ;;
   unset)
-    name="${1:-}"; shift || true
-    [ -n "${name:-}" ] || die "usage: pass env unset NAME [--entry PATH]"
-    entry="$ENTRY_DEFAULT"
+    name="${1:-}"
+    entry=""
+    shift || true
+    [ -n "${name:-}" ] || die "usage: pass env unset NAME --entry PATH"
     [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
+    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
     unset_var "$name" "$entry"
     ;;
   ls)
-    entry="$ENTRY_DEFAULT"
+    entry=""
     [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
+    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
     print_entry "$entry" raw | sed 's/=.*$//'
     ;;
   *) die "unknown subcommand: $cmd (try 'pass env help')" ;;
