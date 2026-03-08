@@ -5,7 +5,7 @@ MAN_DIR ?= /usr/share/man
 BASHCOMP_DIR ?= /etc/bash_completion.d
 
 install:
-	@sudoinstall -v -d "$(MAN_DIR)/man1"
+	@sudo install -v -d "$(MAN_DIR)/man1"
 	@sudo install -v -m 0644 man/pass-env.1 "$(MAN_DIR)/man1/pass-env.1"
 	@sudo install -v -d "$(EXTENSION_DIR)/"
 	@sudo install -v -m0755 src/env.bash "$(EXTENSION_DIR)/env.bash"
