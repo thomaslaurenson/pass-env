@@ -9,60 +9,85 @@ PASS_CMD="pass"  # in case you need to call back into pass
 
 die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
 
+_fzf_select_entry() {
+    local query="${1:-}"
+    if ! command -v fzf &>/dev/null; then
+        die "--entry PATH is required (fzf not installed for interactive selection)"
+    fi
+    local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+    find "$password_store_dir" \
+        -name "*.gpg" \
+        -printf "%P\n" \
+        | sed 's/\.gpg$//' \
+        | sort \
+        | fzf --multi \
+              --height=40% \
+              --layout=reverse \
+              --border \
+              --prompt="Pass entry: " \
+              --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel" \
+              ${query:+--query="$query"} \
+        | head -n1
+}
+
+# Resolve an entry: use candidate if it exists in the store, otherwise fall
+# back to interactive fzf selection (pre-seeded with the candidate as query).
+_resolve_entry() {
+    local candidate="$1"
+    local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+    if [ -n "$candidate" ]; then
+        if [ -f "$password_store_dir/$candidate.gpg" ]; then
+            printf '%s' "$candidate"
+            return
+        fi
+        printf 'pass env: entry not found: %s\n' "$candidate" >&2
+    fi
+    local selected
+    selected="$(_fzf_select_entry "$candidate")"
+    [ -n "$selected" ] || die "No entry selected."
+    printf '%s' "$selected"
+}
+
 help() {
   cat <<'EOF'
 Usage:
-  pass env print --entry PATH [--export]
-  pass env run --entry PATH -- COMMAND [ARGS...]
-  pass env set NAME VALUE --entry PATH
-  pass env unset NAME --entry PATH
-  pass env ls --entry PATH
+  pass env run   [ENTRY]  -- COMMAND [ARGS...]
+  pass env set   [ENTRY]
+  pass env unset [ENTRY]
   pass env help
 
 Notes:
-  - The --entry PATH argument is required for all commands.
-  - Entries contain either KEY=VALUE lines or export KEY=VALUE lines.
-  - Use `print` with --export to force "export KEY=VALUE" output.
-  - `run` loads variables only for the invoked COMMAND (safer).
+  - ENTRY is optional; omit it to pick interactively with fzf.
+  - Entries must contain KEY=VALUE lines (one per line).
+  - `run`   loads vars only for the invoked COMMAND (one-off, safer).
+  - `set`   prints export statements; eval to load vars into the current shell:
+              eval "$(pass env set ENTRY)"
+  - `unset` prints unset statements; eval to remove vars from the current shell:
+              eval "$(pass env unset ENTRY)"
 EOF
 }
 
 print_entry() {
   # $1: Entry path of password store
-  # $2: Mode: "raw" (default) or "export"
   local entry="$1"
-  local mode="${2:-raw}"
 
   # Decrypt content from password store
   local content
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
 
-  # Normalize to KEY=VALUE lines:
-  # - If lines already start with 'export ', strip it unless mode=export
-  # - Ensure values are shell-escaped
   while IFS= read -r line; do
-    # Skip blanks line
+    # Skip blank lines
     [ -z "$line" ] && continue
     # Skip comment lines (#)
     case "$line" in \#*) continue ;; esac
-    # Accept export KEY=VALUE
-    if [[ "$line" =~ ^export[[:space:]]+([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
     # Accept KEY=VALUE
-    elif [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+    if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-    # Skip anything else
     else
       die "unsupported line format in $entry: $line"
     fi
-
-    # Re-emit safely (re-quote)
-    # Use printf %q for bash; for POSIX you'd need a custom escaper
-    if [ "$mode" = export ]; then
-      printf 'export %s=%q\n' "$key" "$val"
-    else
-      printf '%s=%q\n' "$key" "$val"
-    fi
+    # Re-emit with shell-safe quoting
+    printf '%s=%q\n' "$key" "$val"
   done <<< "$content"
 }
 
@@ -75,114 +100,80 @@ run_with_env() {
   tmp="$(mktemp)"
   # Ensure cleanup even if command fails
   trap 'rm -f "$tmp"' EXIT
-  print_entry "$entry" raw >"$tmp"
+  print_entry "$entry" >"$tmp"
   # shellcheck disable=SC1090
   ( set -a; . "$tmp"; exec "$@" )
   # trap will clean up on function exit
 }
 
-set_var() {
-  # $1: Entry path of password store
-  # $2: Variable name to export
-  # $3: Variable value to export
+set_env() {
+  # Read a KEY=VALUE entry from pass and emit `export KEY=VALUE` lines for eval.
   local entry="$1"
-  local name="$2"
-  local value="$3"
-  # Load content, update or append the KEY=VALUE line, write back via pass edit
   local content
-  content="$("$PASS_CMD" show -- "$entry" 2>/dev/null || true)"
-  local updated=""
-  local found=0
+  content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
   while IFS= read -r line; do
-    if [[ "$line" =~ ^([[:space:]]*export[[:space:]]+)?$name= ]]; then
-      updated+="$name=$value"$'\n'
-      found=1
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+      printf 'export %s=%q\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     else
-      updated+="$line"$'\n'
+      die "unsupported line format in $entry: $line"
     fi
   done <<< "$content"
-  [ "$found" -eq 1 ] || updated+="$name=$value"$'\n'
-
-  # Write back using pass's editor pipeline
-  printf '%s' "$updated" | "$PASS_CMD" insert -m -f -- "$entry" >/dev/null
-  printf 'Set %s in %s\n' "$name" "$entry"
 }
 
-unset_var() {
-  # $1: Entry path of password store
-  # $2: Variable name
-  local name="$2"
+unset_env() {
+  # Read a KEY=VALUE entry from pass and emit `unset KEY ...` lines for eval.
   local entry="$1"
   local content
-  content="$("$PASS_CMD" show -- "$entry" 2>/dev/null || true)"
-  [ -n "$content" ] || die "entry not found or empty: $entry"
-
-  local updated=""
-  local removed=0
+  content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
+  local keys=()
   while IFS= read -r line; do
-    if [[ "$line" =~ ^([[:space:]]*export[[:space:]]+)?$name= ]]; then
-      removed=1; continue
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    if [[ "$line" =~ ^([^=]+)= ]]; then
+      keys+=("${BASH_REMATCH[1]}")
     fi
-    updated+="$line"$'\n'
   done <<< "$content"
-
-  printf '%s' "$updated" | "$PASS_CMD" insert -m -f -- "$entry" >/dev/null
-  [ "$removed" -eq 1 ] && printf 'Unset %s in %s\n' "$name" "$entry" || printf 'No %s in %s\n' "$name" "$entry"
+  [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
 }
 
 # ---- dispatcher ----
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
-  print)
-    mode="raw"
-    entry=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --entry) entry="$2"; shift 2 ;;
-        --export) mode="export"; shift ;;
-        *) break ;;
-      esac
-    done
-    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
-    print_entry "$entry" "$mode"
-    ;;
   run)
     entry=""
+    saw_dashdash=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --entry) entry="$2"; shift 2 ;;
-        --) shift; break ;;
+        --) shift; saw_dashdash=1; break ;;
         *) break ;;
       esac
     done
-    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
+    # Only pick up a positional entry if -- hasn't already been consumed;
+    # if -- was seen first, everything remaining is the command.
+    if [ "$saw_dashdash" -eq 0 ]; then
+      [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
+      [ "${1:-}" = "--" ] && shift  # consume -- that follows a positional entry
+    fi
+    entry="$(_resolve_entry "$entry")"
     run_with_env "$entry" "$@"
     ;;
   set)
-    name="${1:-}"
-    value="${2:-}"
     entry=""
-    shift 2 || true
-    if [ -z "${name:-}" ] || [ -z "${value:-}" ]; then die "usage: pass env set NAME VALUE --entry PATH"; fi
     [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
-    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
-    set_var "$name" "$value" "$entry"
+    [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
+    entry="$(_resolve_entry "$entry")"
+    set_env "$entry"
     ;;
   unset)
-    name="${1:-}"
-    entry=""
-    shift || true
-    [ -n "${name:-}" ] || die "usage: pass env unset NAME --entry PATH"
-    [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
-    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
-    unset_var "$name" "$entry"
-    ;;
-  ls)
     entry=""
     [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
-    [ -n "$entry" ] || die "Required: --entry PATH (see 'pass env help')"
-    print_entry "$entry" raw | sed 's/=.*$//'
+    [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
+    entry="$(_resolve_entry "$entry")"
+    unset_env "$entry"
     ;;
   *) die "unknown subcommand: $cmd (try 'pass env help')" ;;
 esac
