@@ -11,34 +11,6 @@ __pass_env_list_entries() {
   fi
 }
 
-# --- helper: print KEYs present in an entry (parsing KEY=VALUE or export KEY=VALUE) ---
-__pass_env_list_keys_in_entry() {
-  local entry="$1"
-  [[ -n "$entry" ]] || return 0
-  # Resolve using pass show; ignore errors quietly.
-  local content
-  content="$(pass show -- "$entry" 2>/dev/null)" || return 0
-
-  # Extract keys from lines like:
-  #   KEY=VALUE
-  #   export KEY=VALUE
-  # Ignore comments and blank lines.
-  # Use awk for portability and robustness with spaces.
-  awk '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*$/ { next }
-    {
-      line=$0
-      sub(/^[[:space:]]*/, "", line)
-      if (line ~ /^export[[:space:]]+/) {
-        sub(/^export[[:space:]]+/, "", line)
-      }
-      split(line, kv, "=")
-      if (kv[1] != "") print kv[1]
-    }
-  ' <<<"$content" | sort -u
-}
-
 # --- helper: complete entries (respecting partial path components) ---
 __pass_env_complete_entries() {
   local cur="$1"
@@ -70,7 +42,7 @@ __pass_env() {
   # If cursor is at the subcommand position (or subcmd is an option/dash), complete subcommands
   local subcmd_pos=$((env_idx+1))
   if (( cword == subcmd_pos )) || [[ "$subcmd" == -* ]]; then
-    local subs="print run set unset ls help"
+    local subs="run set unset help"
     COMPREPLY=( $(compgen -W "$subs" -- "$cur") )
     return 0
   fi
@@ -79,21 +51,6 @@ __pass_env() {
   case "$subcmd" in
     help)
       COMPREPLY=() # nothing more to complete
-      ;;
-
-    print)
-      # pass env print [--entry PATH] [--export]
-      # Complete flags first, then entry after --entry
-      local opts="--entry --export --help -h"
-      # If previous is --entry, complete entries
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-      # Otherwise, suggest flags and, if user typed a bare path (no flag), also entries
-      COMPREPLY+=( $(compgen -W "$opts" -- "$cur") )
-      # Also allow completing entries as a convenience
-      __pass_env_complete_entries "$cur"
       ;;
 
     run)
@@ -122,87 +79,28 @@ __pass_env() {
       ;;
 
     set)
-      # pass env set NAME VALUE [--entry PATH]
-      # We need to detect which positional we’re at relative to subcmd.
-      # Tokens after subcmd (index subcmd_pos+1 => NAME, +2 => VALUE)
-      local name_idx=$((subcmd_pos+1))
-      local value_idx=$((subcmd_pos+2))
-
-      if (( cword == name_idx )); then
-        # Complete env var names? We can suggest existing keys from default/selected entry if provided
-        # Look ahead for a --entry value to seed suggestions
-        local entry=""
-        for (( j=subcmd_pos+1; j<${#words[@]}; j++ )); do
-          if [[ "${words[$j]}" == "--entry" && $((j+1)) -lt ${#words[@]} ]]; then
-            entry="${words[$((j+1))]}"; break
-          fi
-        done
-        if [[ -n "$entry" ]]; then
-          local IFS=$'\n'; local keys=( $(__pass_env_list_keys_in_entry "$entry") )
-          COMPREPLY+=( $(compgen -W "${keys[*]}" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=() # otherwise no opinion
-        return 0
-      fi
-
-      if (( cword == value_idx )); then
-        COMPREPLY=() # free-form value
-        return 0
-      fi
-
-      # After NAME and VALUE, offer --entry and complete entries after it
+      # pass env set [ENTRY] | pass env set --entry ENTRY
       if [[ "$prev" == "--entry" ]]; then
         __pass_env_complete_entries "$cur"
         return 0
       fi
       COMPREPLY+=( $(compgen -W "--entry --help -h" -- "$cur") )
+      __pass_env_complete_entries "$cur"
       ;;
 
     unset)
-      # pass env unset NAME [--entry PATH]
-      # If previous is --entry, complete entries; else, try to complete KEYs if we can detect entry
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-
-      # Determine selected entry (if user supplied --entry earlier)
-      local entry=""
-      for (( j=subcmd_pos+1; j<${#words[@]}; j++ )); do
-        if [[ "${words[$j]}" == "--entry" && $((j+1)) -lt ${#words[@]} ]]; then
-          entry="${words[$((j+1))]}"; break
-        fi
-      done
-
-      if (( cword == subcmd_pos+1 )); then
-        # Completing NAME: suggest keys from chosen entry (if any)
-        if [[ -n "$entry" ]]; then
-          local IFS=$'\n'; local keys=( $(__pass_env_list_keys_in_entry "$entry") )
-          COMPREPLY+=( $(compgen -W "${keys[*]}" -- "$cur") )
-          return 0
-        fi
-        COMPREPLY=() # otherwise free-form
-        return 0
-      fi
-
-      COMPREPLY+=( $(compgen -W "--entry --help -h" -- "$cur") )
-      ;;
-
-    ls)
-      # pass env ls [--entry PATH]
+      # pass env unset [ENTRY] | pass env unset --entry ENTRY
       if [[ "$prev" == "--entry" ]]; then
         __pass_env_complete_entries "$cur"
         return 0
       fi
       COMPREPLY+=( $(compgen -W "--entry --help -h" -- "$cur") )
-      # Also let user complete entries directly (convenience)
       __pass_env_complete_entries "$cur"
       ;;
 
     *)
-      # Unknown subcommand (or user is still typing) -> show subcmds
-      COMPREPLY=( $(compgen -W "print run set unset ls help" -- "$cur") )
+      # Unknown subcommand -> show subcmds
+      COMPREPLY=( $(compgen -W "run set unset help" -- "$cur") )
       ;;
   esac
 }
