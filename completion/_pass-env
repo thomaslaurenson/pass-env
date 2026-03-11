@@ -1,0 +1,97 @@
+#compdef -P pass\ env*
+# Zsh completion for the `pass env` extension
+#
+# Installation — add the completion/ directory to your fpath BEFORE compinit:
+#
+#   # ~/.zshrc
+#   fpath=(/path/to/pass-env/completion $fpath)
+#   autoload -Uz compinit && compinit
+#
+# Or copy this file to a directory already on your fpath, e.g.:
+#   sudo cp _pass-env /usr/local/share/zsh/site-functions/    (macOS/Homebrew)
+#   sudo cp _pass-env /usr/share/zsh/site-functions/          (Linux)
+
+# --- helper: list pass entries ---
+_pass_env_entries() {
+  local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  [[ -d "$password_store_dir" ]] || return 0
+  local -a entries
+  entries=( "${(@f)$(
+    find "$password_store_dir" -name '*.gpg' -printf '%P\n' 2>/dev/null \
+      | sed 's/\.gpg$//' \
+      | sort
+  )}" )
+  compadd -M 'r:|/=* r:|=*' -a entries
+}
+
+# --- main completion function ---
+_pass_env() {
+  local state
+
+  # Strip leading 'pass env' tokens so $words[1] is always the subcommand
+  # when called via the #compdef pattern.
+  local -a words
+  words=( "${(@)words[3,-1]}" )   # words[1]=pass  words[2]=env  rest=ours
+  local CURRENT=$(( CURRENT - 2 ))
+  (( CURRENT < 1 )) && CURRENT=1
+
+  local -a subcommands
+  subcommands=(
+    'run:load vars for a single command (vars do not persist)'
+    'set:print export statements; eval to load vars into the current shell'
+    'unset:print unset statements; eval to remove vars from the current shell'
+    'help:show usage information'
+  )
+
+  _arguments -C \
+    '1: :->subcmd' \
+    '*:: :->args'
+
+  case $state in
+    subcmd)
+      _describe 'subcommand' subcommands
+      ;;
+
+    args)
+      case $words[1] in
+        run)
+          # Detect whether -- has already been supplied.
+          # Everything after -- is the command to run — do not complete it.
+          local ddash_idx=0 i
+          for (( i = 2; i <= $#words; i++ )); do
+            if [[ "${words[$i]}" == '--' ]]; then
+              ddash_idx=$i
+              break
+            fi
+          done
+
+          if (( ddash_idx > 0 && CURRENT > ddash_idx )); then
+            # After --: leave completion to the shell
+            return 0
+          fi
+
+          _arguments \
+            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '--[end of pass-env flags; COMMAND follows]' \
+            '1:entry:_pass_env_entries'
+          ;;
+
+        set|unset)
+          _arguments \
+            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '1:entry:_pass_env_entries'
+          ;;
+
+        help)
+          return 0
+          ;;
+
+        *)
+          _describe 'subcommand' subcommands
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_pass_env "$@"
