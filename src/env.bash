@@ -51,46 +51,55 @@ _resolve_entry() {
 help() {
   cat <<'EOF'
 Usage:
-  pass env run   [ENTRY]  -- COMMAND [ARGS...]
-  pass env set   [ENTRY]
-  pass env unset [ENTRY]
+  pass env run   [ENTRY [ENTRY ...]] -- COMMAND [ARGS...]
+  pass env set   [ENTRY [ENTRY ...]]
+  pass env unset [ENTRY [ENTRY ...]]
   pass env help
 
 Notes:
-  - ENTRY is optional; omit it to pick interactively with fzf.
+  - ENTRY must end in .env  (e.g. os/prod.env, api/openai.env).
+  - ENTRY is optional for all subcommands; omit it to pick interactively
+    with fzf (TAB to multi-select).
   - Entries must contain KEY=VALUE lines (one per line).
-  - `run`   loads vars only for the invoked COMMAND (one-off, safer).
-  - `set`   prints export statements; eval to load vars into the current shell:
-              eval "$(pass env set ENTRY)"
-  - `unset` prints unset statements; eval to remove vars from the current shell:
-              eval "$(pass env unset ENTRY)"
+    Blank lines and lines beginning with # are ignored.
+  - `run`   loads vars into the subprocess only; nothing leaks to the
+    calling shell (safest option):
+              pass env run os/prod.env -- printenv MY_VAR
+              pass env run e1.env e2.env -- myapp
+  - `set` / `unset` print shell statements; eval them to modify the current
+    shell.  If you have sourced shell/loader.sh, use `passenv set/unset`
+    instead — it handles eval and tracking automatically:
+              passenv set os/prod.env
+              passenv set os/prod.env api/openai.env
+              passenv unset os/prod.env
+    Raw eval form (without loader.sh):
+              eval "$(pass env set os/prod.env)"
+              eval "$(pass env unset os/prod.env)"
 EOF
 }
 
-print_entry() {
-  # $1: Entry path of password store
-  local entry="$1"
-
-  # Decrypt content from password store
-  local content
+_parse_entry() {
+  # Internal: decrypt ENTRY and emit KEY=QUOTEDVAL lines (one per variable).
+  # Blank lines and # comment lines are skipped. Key names are validated as
+  # legal shell identifiers: ^[A-Za-z_][A-Za-z0-9_]*$
+  local entry="$1" content key val
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
-
-  local key val
   while IFS= read -r line; do
-    # Skip blank lines
     [ -z "$line" ] && continue
-    # Skip comment lines (#)
     case "$line" in \#*) continue ;; esac
-    # Accept KEY=VALUE; validate the key is a legal shell identifier
     if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
       [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
+      printf '%s=%q\n' "$key" "$val"
     else
       die "unsupported line format in $entry: $line"
     fi
-    # Re-emit with shell-safe quoting
-    printf '%s=%q\n' "$key" "$val"
   done <<< "$content"
+}
+
+print_entry() {
+  # Emit KEY=QUOTEDVAL lines from a pass entry (used by run_with_env).
+  _parse_entry "$1"
 }
 
 run_with_env() {
@@ -112,39 +121,17 @@ run_with_env() {
 }
 
 set_env() {
-  # Read a KEY=VALUE entry from pass and emit `export KEY=VALUE` lines for eval.
-  local entry="$1"
-  local content
-  content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
-  local key val
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    case "$line" in \#*) continue ;; esac
-    if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
-      printf 'export %s=%q\n' "$key" "$val"
-    else
-      die "unsupported line format in $entry: $line"
-    fi
-  done <<< "$content"
+  # Emit `export KEY=QUOTEDVAL` lines for ENTRY; pipe output to eval to load
+  # the variables into the current shell (or a subshell for `run`).
+  _parse_entry "$1" | sed 's/^/export /'
 }
 
 unset_env() {
-  # Read a KEY=VALUE entry from pass and emit `unset KEY ...` lines for eval.
-  local entry="$1"
-  local content
-  content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
-  local keys=() key
+  # Emit `unset KEY KEY ...` for all variables defined in ENTRY.
+  local keys=() line
   while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    case "$line" in \#*) continue ;; esac
-    if [[ "$line" =~ ^([^=]+)= ]]; then
-      key="${BASH_REMATCH[1]}"
-      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
-      keys+=("$key")
-    fi
-  done <<< "$content"
+    keys+=("${line%%=*}")
+  done < <(_parse_entry "$1")
   [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
 }
 
@@ -173,16 +160,38 @@ case "$cmd" in
     run_with_env "${entries[@]}" -- "$@"
     ;;
   set)
-    raw_entry=""
-    [ "${1:-}" = "--entry" ] && { raw_entry="${2:-}"; shift 2; }
-    [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
-    while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "$raw_entry")
+    raw_entries=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --entry) raw_entries+=("${2:-}"); shift 2 ;;
+        --) shift; break ;;
+        *)  raw_entries+=("$1"); shift ;;
+      esac
+    done
+    if [ "${#raw_entries[@]}" -eq 0 ]; then
+      while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "")
+    else
+      for raw_e in "${raw_entries[@]}"; do
+        while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "$raw_e")
+      done
+    fi
     ;;
   unset)
-    raw_entry=""
-    [ "${1:-}" = "--entry" ] && { raw_entry="${2:-}"; shift 2; }
-    [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
-    while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "$raw_entry")
+    raw_entries=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --entry) raw_entries+=("${2:-}"); shift 2 ;;
+        --) shift; break ;;
+        *)  raw_entries+=("$1"); shift ;;
+      esac
+    done
+    if [ "${#raw_entries[@]}" -eq 0 ]; then
+      while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "")
+    else
+      for raw_e in "${raw_entries[@]}"; do
+        while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "$raw_e")
+      done
+    fi
     ;;
   *) die "unknown subcommand: $cmd (try 'pass env help')" ;;
 esac

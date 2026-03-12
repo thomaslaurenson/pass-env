@@ -241,7 +241,7 @@ _passenv_print() {
       [[ -z "$v" ]] && continue
       local val
       val="$(_passenv_indirect "$v")"
-      if printf '%s' "$v" | grep -qiE '(SECRET|TOKEN|PASSWORD|KEY|PASS)'; then
+      if printf '%s' "$v" | grep -qiE '(^|_)(SECRET|TOKEN|PASSWORD|KEY|PASS)(_|$)'; then
         printf '  %s=%s\n' "$v" '******'
       else
         printf '  %s=%s\n' "$v" "$val"
