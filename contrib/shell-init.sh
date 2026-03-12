@@ -13,11 +13,19 @@ if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
   declare -A _PASSENV_TRACKER
 fi
 
-# ---------------------------------------------------------------------------
-# _passenv_keys
-#   Print each key of _PASSENV_TRACKER on its own line.
-#   Uses eval to isolate zsh-specific syntax from the bash parser.
-# ---------------------------------------------------------------------------
+# Print each key of _PASSENV_TRACKER, one per line.
+#
+# Abstracts the bash/zsh difference in associative-array key iteration:
+# bash uses ${!arr[@]}; zsh uses ${(@k)arr}. Uses eval to parse the zsh
+# syntax without the bash parser ever seeing it.
+#
+# Environment:
+#   _PASSENV_TRACKER - associative array of loaded entries
+#   ZSH_VERSION      - set by zsh; selects the correct iteration syntax
+# Outputs:
+#   stdout: entry key names, one per line
+# Returns:
+#   0 always
 _passenv_keys() {
   if [[ -n "${ZSH_VERSION:-}" ]]; then
     eval 'printf "%s\n" "${(@k)_PASSENV_TRACKER}"'
@@ -26,27 +34,51 @@ _passenv_keys() {
   fi
 }
 
-# ---------------------------------------------------------------------------
-# _passenv_indirect VARNAME
-#   Print the runtime value of the variable named VARNAME.
-#   Uses eval so that neither shell sees the other's indirection syntax.
-# ---------------------------------------------------------------------------
+# Print the runtime value of the variable named VARNAME.
+#
+# Uses eval to avoid the bash/zsh incompatibility in indirect expansion:
+# bash uses ${!name} while zsh uses ${(P)name}. The argument must be a
+# validated shell identifier; callers are responsible for this check.
+#
+# Arguments:
+#   $1 - Name of the variable to dereference
+# Outputs:
+#   stdout: current value of the named variable (no trailing newline)
+# Returns:
+#   0 always
 _passenv_indirect() {
   eval "printf '%s' \"\${$1}\""
 }
 
-# ---------------------------------------------------------------------------
-# _passenv_split_words STRING
-#   Print each whitespace-separated word of STRING on its own line.
-#   Avoids the read -a (bash) vs read -A (zsh) incompatibility.
-# ---------------------------------------------------------------------------
+# Print each whitespace-separated word of STRING, one per line.
+#
+# Avoids the read -a (bash) vs read -A (zsh) incompatibility by relying on
+# unquoted word-splitting, which is consistent across both shells.
+#
+# Arguments:
+#   $1 - Space-separated string of words
+# Outputs:
+#   stdout: one word per line
+# Returns:
+#   0 always
 _passenv_split_words() {
   printf '%s\n' $1
 }
 
-# ---------------------------------------------------------------------------
-# passenv — main entry point
-# ---------------------------------------------------------------------------
+# Main entry point for the passenv shell function.
+#
+# Dispatches to the appropriate subcommand handler. Defaults to 'help' when
+# called with no arguments.
+#
+# Arguments:
+#   $1 - Subcommand: set | unset | list | print | help (default: help)
+#   $@ - Additional arguments forwarded to the subcommand handler
+# Outputs:
+#   stdout: subcommand output
+#   stderr: error message for unknown subcommands
+# Returns:
+#   0 on success
+#   1 for unknown subcommands
 passenv() {
   local subcmd="${1:-help}"
   shift || true
@@ -63,13 +95,17 @@ passenv() {
   esac
 }
 
-# ---------------------------------------------------------------------------
-# passenv set [ENTRY...]
-#   Decrypt one or more pass entries, eval the exported vars into the current
-#   shell, and record each entry and its var names in _PASSENV_TRACKER.
-#   With no ENTRY, an interactive fzf picker is launched inside the pass-env
-#   extension; fzf --multi may return several entries in one call.
-# ---------------------------------------------------------------------------
+# Load one or more pass entries into the current shell.
+#
+# Iterates over the provided entry arguments, calling _passenv_load_one for
+# each. With no arguments, launches an interactive fzf picker via the pass
+# env extension (fzf --multi is enabled inside the extension).
+#
+# Arguments:
+#   $@ - Pass entry paths to load (optional; launches fzf picker if omitted)
+# Returns:
+#   0 if all entries loaded successfully
+#   1 if any entry fails to load
 _passenv_set() {
   if [[ $# -eq 0 ]]; then
     _passenv_load_one ""
@@ -81,10 +117,24 @@ _passenv_set() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# _passenv_load_one ENTRY
-#   Internal helper: load a single pass entry into the current shell.
-# ---------------------------------------------------------------------------
+# Load a single pass entry into the current shell.
+#
+# Calls 'pass env set ENTRY' in a command substitution to obtain export
+# statements, filters them through a strict identifier guard as a
+# defense-in-depth measure, then evals the result into the current shell.
+# Records the entry name and its variable names in _PASSENV_TRACKER.
+#
+# Arguments:
+#   $1 - Pass entry path (optional; fzf picker is launched inside the
+#        extension when omitted)
+# Environment:
+#   _PASSENV_TRACKER - associative array updated with the loaded var names
+# Outputs:
+#   stdout: 'passenv: loaded ENTRY → VAR1 VAR2 ...' confirmation line
+#   stderr: error messages on failure
+# Returns:
+#   0 on success
+#   1 if the pass command fails, returns no output, or emits no valid exports
 _passenv_load_one() {
   local entry="${1:-}"
 
@@ -138,11 +188,21 @@ _passenv_load_one() {
   printf 'passenv: loaded %s → %s\n' "$entry" "$merged"
 }
 
-# ---------------------------------------------------------------------------
-# passenv unset [ENTRY...]
-#   Unset all vars tracked for each ENTRY and remove them from the tracker.
-#   If no ENTRY is given, a multi-select fzf picker is shown over loaded entries.
-# ---------------------------------------------------------------------------
+# Unset variables for one or more loaded entries and remove them from the tracker.
+#
+# With arguments, unsets each named entry in turn. With no arguments, presents
+# a multi-select fzf picker over currently loaded entries. Errors for individual
+# unknown entries are printed to stderr but do not abort the loop.
+#
+# Arguments:
+#   $@ - Entry keys to unset (optional; launches fzf picker if omitted)
+# Environment:
+#   _PASSENV_TRACKER - associative array; matched entries are removed
+# Outputs:
+#   stdout: 'passenv: unset ENTRY → VAR1 VAR2 ...' for each unset entry
+#   stderr: warning if a named entry is not currently loaded
+# Returns:
+#   0 always (errors for individual entries are non-fatal)
 _passenv_unset() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
     printf 'passenv: no entries are currently loaded\n'
@@ -208,10 +268,17 @@ _passenv_unset() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# passenv list
-#   Print a formatted table of all currently loaded entries and their vars.
-# ---------------------------------------------------------------------------
+# Print a formatted table of all currently loaded entries and their variables.
+#
+# Outputs a two-column header table (ENTRY / VARIABLES). Uses _passenv_keys
+# to iterate in a shell-agnostic way across both bash and zsh.
+#
+# Environment:
+#   _PASSENV_TRACKER - associative array of loaded entries
+# Outputs:
+#   stdout: formatted table, or a 'no entries' message if the tracker is empty
+# Returns:
+#   0 always
 _passenv_list() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
     printf 'passenv: no entries are currently loaded\n'
@@ -225,10 +292,19 @@ _passenv_list() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# passenv print
-#   Print each tracked var and its live value. Mask sensitive var names.
-# ---------------------------------------------------------------------------
+# Print the live values of all currently tracked variables.
+#
+# Groups output by entry (prefixed with a '# ENTRY' comment line). Values for
+# variables whose names match a sensitive-word pattern (SECRET, TOKEN,
+# PASSWORD, KEY, or PASS at a word boundary) are masked as '******'.
+#
+# Environment:
+#   _PASSENV_TRACKER - associative array of loaded entries
+# Outputs:
+#   stdout: grouped KEY=VALUE lines with sensitive values masked,
+#           or a 'no entries' message if the tracker is empty
+# Returns:
+#   0 always
 _passenv_print() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
     printf 'passenv: no entries are currently loaded\n'
@@ -250,9 +326,12 @@ _passenv_print() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# passenv help
-# ---------------------------------------------------------------------------
+# Print usage information for the passenv shell function.
+#
+# Outputs:
+#   stdout: usage text covering all subcommands, examples, and notes
+# Returns:
+#   0 always
 _passenv_help() {
   cat <<'EOF'
 Usage: passenv <subcommand> [ENTRY]

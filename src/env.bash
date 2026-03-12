@@ -7,8 +7,31 @@ set -euo pipefail
 
 PASS_CMD="pass"  # in case you need to call back into pass
 
+# Print an error message to stderr and exit with status 1.
+#
+# Arguments:
+#   $@ - Error message text
+# Outputs:
+#   stderr: formatted error message prefixed with 'pass env:'
+# Returns:
+#   exits 1 (does not return to the caller)
 die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
 
+# Present an interactive fzf picker of all .env entries in the password store.
+#
+# Supports TAB-based multi-selection (fzf --multi). Prints selected entry
+# path(s) one per line, with the .gpg suffix removed. Dies if fzf is not
+# installed.
+#
+# Arguments:
+#   $1 - Optional seed query pre-filled in the fzf prompt (default: empty)
+# Environment:
+#   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
+# Outputs:
+#   stdout: selected entry path(s), one per line (no .gpg suffix)
+# Returns:
+#   0 on successful selection
+#   non-zero if fzf exits with an error or the user presses ESC
 _fzf_select_entry() {
     local query="${1:-}"
     if ! command -v fzf &>/dev/null; then
@@ -28,9 +51,23 @@ _fzf_select_entry() {
               ${query:+--query="$query"}
 }
 
-# Resolve an entry: use candidate if it exists in the store, otherwise fall
-# back to interactive fzf selection (pre-seeded with the candidate as query).
-# Prints one or more entry paths, one per line (fzf --multi may return many).
+# Resolve a pass entry path, falling back to fzf when not found directly.
+#
+# If the candidate is non-empty and names a valid .env entry on disk, prints
+# it and returns immediately. Otherwise launches _fzf_select_entry, optionally
+# pre-seeded with the candidate as a query string. Enforces the requirement
+# that all entry names end in .env.
+#
+# Arguments:
+#   $1 - Candidate entry path (optional; triggers fzf if empty or not found)
+# Environment:
+#   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
+# Outputs:
+#   stdout: resolved entry path(s), one per line
+#   stderr: error if the candidate does not end in .env or is not found
+# Returns:
+#   0 on success
+#   exits 1 if the candidate is invalid or no entry can be resolved
 _resolve_entry() {
     local candidate="$1"
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
@@ -48,6 +85,12 @@ _resolve_entry() {
     printf '%s\n' "$selected"
 }
 
+# Print usage information for the pass env extension to stdout.
+#
+# Outputs:
+#   stdout: usage text covering all subcommands and their options
+# Returns:
+#   0 always
 help() {
   cat <<'EOF'
 Usage:
@@ -67,7 +110,7 @@ Notes:
               pass env run os/prod.env -- printenv MY_VAR
               pass env run e1.env e2.env -- myapp
   - `set` / `unset` print shell statements; eval them to modify the current
-    shell.  If you have sourced shell/loader.sh, use `passenv set/unset`
+    shell.  If you have sourced contrib/shell-init.sh, use `passenv set/unset`
     instead — it handles eval and tracking automatically:
               passenv set os/prod.env
               passenv set os/prod.env api/openai.env
@@ -78,10 +121,23 @@ Notes:
 EOF
 }
 
+# Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
+#
+# Each non-blank, non-comment line must be in KEY=VALUE format. Key names are
+# validated against ^[A-Za-z_][A-Za-z0-9_]*$. Values are shell-quoted with
+# printf %q so the output is safe to eval or source directly.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+# Environment:
+#   PASS_CMD - pass executable to invoke (default: "pass")
+# Outputs:
+#   stdout: KEY=QUOTEDVAL lines, one per variable
+#   stderr: error message on invalid content or decryption failure
+# Returns:
+#   0 on success
+#   exits 1 on decryption failure, invalid key name, or unsupported line format
 _parse_entry() {
-  # Internal: decrypt ENTRY and emit KEY=QUOTEDVAL lines (one per variable).
-  # Blank lines and # comment lines are skipped. Key names are validated as
-  # legal shell identifiers: ^[A-Za-z_][A-Za-z0-9_]*$
   local entry="$1" content key val
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
   while IFS= read -r line; do
@@ -97,14 +153,34 @@ _parse_entry() {
   done <<< "$content"
 }
 
+# Emit KEY=QUOTEDVAL lines from a pass entry.
+#
+# Thin wrapper around _parse_entry; used internally by run_with_env.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+# Outputs:
+#   stdout: KEY=QUOTEDVAL lines, one per variable
+# Returns:
+#   0 on success, exits 1 on any error (see _parse_entry)
 print_entry() {
-  # Emit KEY=QUOTEDVAL lines from a pass entry (used by run_with_env).
   _parse_entry "$1"
 }
 
+# Execute a command with environment variables from one or more pass entries.
+#
+# Entries are loaded and the command is executed entirely within a subshell;
+# no variables are written to disk and nothing leaks into the calling shell.
+#
+# Arguments:
+#   $@ - ENTRY [ENTRY ...] -- COMMAND [ARGS...]
+#        Entry paths must precede '--'; everything after '--' is the command.
+# Outputs:
+#   stdout/stderr: forwarded from COMMAND
+# Returns:
+#   exit status of COMMAND
+#   exits 1 if ENTRY or COMMAND arguments are missing
 run_with_env() {
-  # Args: ENTRY [ENTRY ...] -- COMMAND [ARGS...]
-  # Vars are loaded into a subshell only; nothing is written to disk.
   local entries=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     entries+=("$1"); shift
@@ -120,14 +196,34 @@ run_with_env() {
   )
 }
 
+# Emit 'export KEY=QUOTEDVAL' lines for all variables in a pass entry.
+#
+# Output is intended to be captured and eval'd by the caller to load variables
+# into the current shell. When used via contrib/shell-init.sh, _passenv_load_one
+# handles the eval automatically.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+# Outputs:
+#   stdout: 'export KEY=QUOTEDVAL' lines, one per variable
+# Returns:
+#   0 on success, exits 1 on any error (see _parse_entry)
 set_env() {
-  # Emit `export KEY=QUOTEDVAL` lines for ENTRY; pipe output to eval to load
-  # the variables into the current shell (or a subshell for `run`).
   _parse_entry "$1" | sed 's/^/export /'
 }
 
+# Emit an 'unset KEY KEY ...' line for all variables in a pass entry.
+#
+# Output is intended to be eval'd by the caller to remove variables from the
+# current shell. The line is omitted when the entry defines no variables.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+# Outputs:
+#   stdout: 'unset KEY ...' line (omitted if the entry defines no variables)
+# Returns:
+#   0 on success, exits 1 on any error (see _parse_entry)
 unset_env() {
-  # Emit `unset KEY KEY ...` for all variables defined in ENTRY.
   local keys=() line
   while IFS= read -r line; do
     keys+=("${line%%=*}")
@@ -140,23 +236,32 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
   run)
-    raw_entry=""
+    raw_entries=()
     saw_dashdash=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --entry) raw_entry="$2"; shift 2 ;;
+        --entry) raw_entries+=("${2:-}"); shift 2 ;;
         --) shift; saw_dashdash=1; break ;;
         *) break ;;
       esac
     done
-    # Only pick up a positional entry if -- hasn't already been consumed;
-    # if -- was seen first, everything remaining is the command.
+    # Collect all positional entries (everything up to --) when the explicit
+    # -- separator was not the first token consumed.
     if [ "$saw_dashdash" -eq 0 ]; then
-      [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
-      [ "${1:-}" = "--" ] && shift  # consume -- that follows a positional entry
+      while [ $# -gt 0 ] && [ "${1}" != "--" ]; do
+        raw_entries+=("$1"); shift
+      done
+      [ "${1:-}" = "--" ] && shift
     fi
-    entries=()
-    while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "$raw_entry")
+    if [ "${#raw_entries[@]}" -eq 0 ]; then
+      entries=()
+      while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "")
+    else
+      entries=()
+      for raw_e in "${raw_entries[@]}"; do
+        while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "$raw_e")
+      done
+    fi
     run_with_env "${entries[@]}" -- "$@"
     ;;
   set)
