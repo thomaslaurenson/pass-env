@@ -15,9 +15,8 @@ _fzf_select_entry() {
         die "--entry PATH is required (fzf not installed for interactive selection)"
     fi
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
-    find "$password_store_dir" \
-        -name "*.gpg" \
-        -printf "%P\n" \
+    find "$password_store_dir" -name "*.env.gpg" -type f \
+        | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
         | sed 's/\.gpg$//' \
         | sort \
         | fzf --multi \
@@ -26,18 +25,19 @@ _fzf_select_entry() {
               --border \
               --prompt="Pass entry: " \
               --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-              ${query:+--query="$query"} \
-        | head -n1
+              ${query:+--query="$query"}
 }
 
 # Resolve an entry: use candidate if it exists in the store, otherwise fall
 # back to interactive fzf selection (pre-seeded with the candidate as query).
+# Prints one or more entry paths, one per line (fzf --multi may return many).
 _resolve_entry() {
     local candidate="$1"
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
     if [ -n "$candidate" ]; then
+        [[ "$candidate" == *.env ]] || die "entry name must end in .env: $candidate"
         if [ -f "$password_store_dir/$candidate.gpg" ]; then
-            printf '%s' "$candidate"
+            printf '%s\n' "$candidate"
             return
         fi
         printf 'pass env: entry not found: %s\n' "$candidate" >&2
@@ -45,7 +45,7 @@ _resolve_entry() {
     local selected
     selected="$(_fzf_select_entry "$candidate")"
     [ -n "$selected" ] || die "No entry selected."
-    printf '%s' "$selected"
+    printf '%s\n' "$selected"
 }
 
 help() {
@@ -75,14 +75,16 @@ print_entry() {
   local content
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
 
+  local key val
   while IFS= read -r line; do
     # Skip blank lines
     [ -z "$line" ] && continue
     # Skip comment lines (#)
     case "$line" in \#*) continue ;; esac
-    # Accept KEY=VALUE
+    # Accept KEY=VALUE; validate the key is a legal shell identifier
     if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
     else
       die "unsupported line format in $entry: $line"
     fi
@@ -92,18 +94,21 @@ print_entry() {
 }
 
 run_with_env() {
-  # $1: entry path of password store
-  local entry="$1"; shift
+  # Args: ENTRY [ENTRY ...] -- COMMAND [ARGS...]
+  # Vars are loaded into a subshell only; nothing is written to disk.
+  local entries=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    entries+=("$1"); shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  [ "${#entries[@]}" -ge 1 ] || die "run: missing ENTRY"
   [ "$#" -ge 1 ] || die "run: missing COMMAND"
-  # Build an env file for a subshell
-  local tmp
-  tmp="$(mktemp)"
-  # Ensure cleanup even if command fails
-  trap 'rm -f "$tmp"' EXIT
-  print_entry "$entry" >"$tmp"
-  # shellcheck disable=SC1090
-  ( set -a; . "$tmp"; exec "$@" )
-  # trap will clean up on function exit
+  (
+    for e in "${entries[@]}"; do
+      eval "$(set_env "$e")"
+    done
+    exec "$@"
+  )
 }
 
 set_env() {
@@ -111,11 +116,14 @@ set_env() {
   local entry="$1"
   local content
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
+  local key val
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
     if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
-      printf 'export %s=%q\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
+      printf 'export %s=%q\n' "$key" "$val"
     else
       die "unsupported line format in $entry: $line"
     fi
@@ -127,12 +135,14 @@ unset_env() {
   local entry="$1"
   local content
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
-  local keys=()
+  local keys=() key
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
     if [[ "$line" =~ ^([^=]+)= ]]; then
-      keys+=("${BASH_REMATCH[1]}")
+      key="${BASH_REMATCH[1]}"
+      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
+      keys+=("$key")
     fi
   done <<< "$content"
   [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
@@ -143,11 +153,11 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
   run)
-    entry=""
+    raw_entry=""
     saw_dashdash=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --entry) entry="$2"; shift 2 ;;
+        --entry) raw_entry="$2"; shift 2 ;;
         --) shift; saw_dashdash=1; break ;;
         *) break ;;
       esac
@@ -155,25 +165,24 @@ case "$cmd" in
     # Only pick up a positional entry if -- hasn't already been consumed;
     # if -- was seen first, everything remaining is the command.
     if [ "$saw_dashdash" -eq 0 ]; then
-      [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
+      [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
       [ "${1:-}" = "--" ] && shift  # consume -- that follows a positional entry
     fi
-    entry="$(_resolve_entry "$entry")"
-    run_with_env "$entry" "$@"
+    entries=()
+    while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "$raw_entry")
+    run_with_env "${entries[@]}" -- "$@"
     ;;
   set)
-    entry=""
-    [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
-    [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
-    entry="$(_resolve_entry "$entry")"
-    set_env "$entry"
+    raw_entry=""
+    [ "${1:-}" = "--entry" ] && { raw_entry="${2:-}"; shift 2; }
+    [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
+    while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "$raw_entry")
     ;;
   unset)
-    entry=""
-    [ "${1:-}" = "--entry" ] && { entry="${2:-}"; shift 2; }
-    [ -z "$entry" ] && [ $# -gt 0 ] && { entry="$1"; shift; }
-    entry="$(_resolve_entry "$entry")"
-    unset_env "$entry"
+    raw_entry=""
+    [ "${1:-}" = "--entry" ] && { raw_entry="${2:-}"; shift 2; }
+    [ -z "$raw_entry" ] && [ $# -gt 0 ] && { raw_entry="$1"; shift; }
+    while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "$raw_entry")
     ;;
   *) die "unknown subcommand: $cmd (try 'pass env help')" ;;
 esac
