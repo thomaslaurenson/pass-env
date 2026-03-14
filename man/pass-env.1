@@ -158,6 +158,30 @@ is given, launches an interactive
 picker over currently loaded entries.
 
 .TP
+.BI "passenv run " "[ENTRY ...]" " \-\- " "COMMAND [ARGS...]"
+Decrypt one or more entries and execute
+.I COMMAND
+with their variables set in its environment only.
+Nothing leaks into the current shell.
+This is a convenience wrapper around
+.B pass env run
+for users who have sourced the shell function.
+If no
+.I ENTRY
+is given before
+.BR \-\- ,
+an interactive
+.BR fzf (1)
+picker is launched.
+.PP
+.RS
+.EX
+passenv run os/prod.env \-\- printenv MY_VAR
+passenv run api/openai.env db/prod.env \-\- myapp
+.EE
+.RE
+
+.TP
 .B passenv list
 List all
 .I .env
