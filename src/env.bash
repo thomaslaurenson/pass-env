@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
+
 # pass extension: env
-# Location: ~/.password-store/.extensions/env.bash
-# Usage: pass env <subcommand> [flags]
+#
+# Requires: 
+# pass with the env extension
+# gpg (bunled with pass)
+# fzf (optional, for interactive selection)
 
 set -euo pipefail
 
-PASS_CMD="pass"  # in case you need to call back into pass
+PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -94,6 +98,7 @@ _resolve_entry() {
 help() {
   cat <<'EOF'
 Usage:
+  pass env list
   pass env run   [ENTRY [ENTRY ...]] -- COMMAND [ARGS...]
   pass env set   [ENTRY [ENTRY ...]]
   pass env unset [ENTRY [ENTRY ...]]
@@ -101,24 +106,45 @@ Usage:
 
 Notes:
   - ENTRY must end in .env  (e.g. os/prod.env, api/openai.env).
-  - ENTRY is optional for all subcommands; omit it to pick interactively
+  - ENTRY is optional for run/set/unset; omit it to pick interactively
     with fzf (TAB to multi-select).
   - Entries must contain KEY=VALUE lines (one per line).
     Blank lines and lines beginning with # are ignored.
+  - `list` prints all .env entries available in the password store.
   - `run`   loads vars into the subprocess only; nothing leaks to the
     calling shell (safest option):
               pass env run os/prod.env -- printenv MY_VAR
               pass env run e1.env e2.env -- myapp
   - `set` / `unset` print shell statements; eval them to modify the current
-    shell.  If you have sourced contrib/shell-init.sh, use `passenv set/unset`
+    shell.  If you have sourced contrib/pass-env-init.sh, use `passenv set/unset`
     instead — it handles eval and tracking automatically:
               passenv set os/prod.env
               passenv set os/prod.env api/openai.env
               passenv unset os/prod.env
-    Raw eval form (without loader.sh):
+    Raw eval form (without pass-env-init.sh):
               eval "$(pass env set os/prod.env)"
               eval "$(pass env unset os/prod.env)"
 EOF
+}
+
+# List all .env entries available in the password store.
+#
+# Walks PASSWORD_STORE_DIR, finds every *.env.gpg file, strips the store
+# root prefix and the .gpg suffix, and prints one entry path per line.
+# Output is sorted alphabetically.
+#
+# Environment:
+#   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
+# Outputs:
+#   stdout: available entry path(s), one per line (no .gpg suffix)
+# Returns:
+#   0 always
+list_entries() {
+  local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  find "$password_store_dir" -name "*.env.gpg" -type f \
+    | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
+    | sed 's/\.gpg$//' \
+    | sort
 }
 
 # Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
@@ -235,6 +261,7 @@ unset_env() {
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
+  list) list_entries ;;
   run)
     raw_entries=()
     saw_dashdash=0
@@ -274,10 +301,12 @@ case "$cmd" in
       esac
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
-      while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "")
+      resolved="$(_resolve_entry "")" || exit 1
+      while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
-        while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "$raw_e")
+        resolved="$(_resolve_entry "$raw_e")" || exit 1
+        while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
       done
     fi
     ;;
@@ -291,10 +320,12 @@ case "$cmd" in
       esac
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
-      while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "")
+      resolved="$(_resolve_entry "")" || exit 1
+      while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
-        while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "$raw_e")
+        resolved="$(_resolve_entry "$raw_e")" || exit 1
+        while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
       done
     fi
     ;;

@@ -1,44 +1,255 @@
-.TH pass-env 1 "2017 April 24" "Version 1.0.0" "User Commands"
+.TH pass-env 1 "2026 March 14" "Version 2.0.0" "User Commands"
 
 .SH NAME
-pass-env - a password-store extension manage env vars
+pass-env \- a password-store extension to manage environment variables from encrypted .env entries
 
 .SH SYNOPSIS
-.B pass
-env
+.B pass env
+.I SUBCOMMAND
 [
-.I pass-name
+.I ENTRY ...
+] [
+.B \-\-
+.I COMMAND ...
 ]
 
 .SH DESCRIPTION
-
-.BR pass(1)
-proposes a format to store meta data in the password file.
-The password is stored in the first line followed by data like the URL, username and other meta data in the following lines.
 .B pass-env
-is an extension for the
-.BR pass(1)
-that allows users to manage env vars.
+is an extension for
+.BR pass (1)
+that lets you store
+.I KEY=VALUE
+environment variable files as encrypted entries in the password store and
+load, unload, or run commands with those variables in a single step.
 
-.SH COMMANDS
+Entries must end in
+.B .env
+(e.g.\&
+.IR os/prod.env ,
+.IR api/openai.env ).
+Each entry contains one
+.I KEY=VALUE
+pair per line; blank lines and lines starting with
+.B #
+are ignored.
+
+A companion shell function,
+.BR passenv ,
+is provided in
+.I contrib/pass-env-init.sh
+for sourcing into
+.BR bash (1)
+or
+.BR zsh (1)
+sessions. It wraps the pass extension and maintains a session tracker so that
+loaded entries can be unloaded cleanly.
+
+.SH PASS EXTENSION SUBCOMMANDS
+
 .TP
-\fBenv\fP \fIpass-name\fP
-.br
-DTODO
+.B pass env list
+Print all
+.I .env
+entries available in the password store, one per line (no
+.I .gpg
+suffix), sorted alphabetically.
+
 .TP
-\fBtailedit\fP \fIpass-name\fP
-Open the password file in the editor omitting the first line. When saving the first line is prepended.
+.BI "pass env run " "ENTRY [ENTRY ...]" " \-\- " "COMMAND [ARGS...]"
+Decrypt one or more entries and execute
+.I COMMAND
+with the resulting variables set in its environment.  Nothing is written to
+disk and no variable leaks into the calling shell.  This is the safest way to
+pass secrets to a subprocess.
+.PP
+.RS
+.EX
+pass env run os/prod.env \-\- printenv MY_VAR
+pass env run api/openai.env db/prod.env \-\- myapp
+.EE
+.RE
+
+.TP
+.BI "pass env set " "ENTRY [ENTRY ...]"
+Decrypt one or more entries and print
+.B export
+.I KEY=VALUE
+statements to stdout.  Eval the output to load variables into the current
+shell.  If
+.I ENTRY
+is omitted and
+.BR fzf (1)
+is installed, an interactive picker is launched (TAB to multi-select).
+.PP
+.RS
+.EX
+eval "$(pass env set os/prod.env)"
+eval "$(pass env set os/prod.env api/openai.env)"
+.EE
+.RE
+
+.TP
+.BI "pass env unset " "ENTRY [ENTRY ...]"
+Decrypt one or more entries and print an
+.B unset
+statement listing all their variable names to stdout.  Eval the output to
+remove the variables from the current shell.  If
+.I ENTRY
+is omitted and
+.BR fzf (1)
+is installed, an interactive picker is launched.
+.PP
+.RS
+.EX
+eval "$(pass env unset os/prod.env)"
+.EE
+.RE
+
+.TP
+.BR "pass env help"
+Print usage information for the extension.
+
+.SH PASSENV SHELL FUNCTION
+
+Source
+.I contrib/pass-env-init.sh
+in your
+.I ~/.bashrc
+or
+.I ~/.zshrc
+to enable the
+.B passenv
+shell function:
+
+.RS
+.EX
+source /path/to/pass-env/contrib/pass-env-init.sh
+.EE
+.RE
+
+The shell function wraps the pass extension, evaluates export/unset output
+directly into the calling shell, and tracks loaded entries in the session
+variable
+.B _PASSENV_TRACKER
+so that they can be unloaded by name.
+
+.TP
+.BI "passenv set " "[ENTRY ...]"
+Load one or more entries into the current shell.  If no
+.I ENTRY
+is given, launches an interactive
+.BR fzf (1)
+picker.
+.PP
+.RS
+.EX
+passenv set os/prod.env
+passenv set os/prod.env api/openai.env
+.EE
+.RE
+
+.TP
+.BI "passenv unset " "[ENTRY ...]"
+Unset the variables loaded from each named entry and remove it from the
+tracker.  If no
+.I ENTRY
+is given, launches an interactive
+.BR fzf (1)
+picker over currently loaded entries.
+
+.TP
+.BI "passenv run " "[ENTRY ...]" " \-\- " "COMMAND [ARGS...]"
+Decrypt one or more entries and execute
+.I COMMAND
+with their variables set in its environment only.
+Nothing leaks into the current shell.
+This is a convenience wrapper around
+.B pass env run
+for users who have sourced the shell function.
+If no
+.I ENTRY
+is given before
+.BR \-\- ,
+an interactive
+.BR fzf (1)
+picker is launched.
+.PP
+.RS
+.EX
+passenv run os/prod.env \-\- printenv MY_VAR
+passenv run api/openai.env db/prod.env \-\- myapp
+.EE
+.RE
+
+.TP
+.B passenv list
+List all
+.I .env
+entries available in the password store (delegates to
+.BR "pass env list" ).
+
+.TP
+.B passenv loaded
+Print a table of all entries currently loaded in this shell session and
+their associated variable names.
+
+.TP
+.B passenv help
+Print usage information for the shell function.
+
+.SH ENTRY FORMAT
+
+Each entry is a plain-text file (encrypted with GPG by pass) containing one
+.I KEY=VALUE
+pair per line.
+.PP
+.EX
+# Example entry: api/openai.env
+OPENAI_API_KEY=sk-abc123
+OPENAI_ORG=org-xyz
+.EE
+.PP
+Rules:
+.IP \(bu 4
+Blank lines are ignored.
+.IP \(bu 4
+Lines beginning with
+.B #
+are treated as comments and ignored.
+.IP \(bu 4
+Key names must match
+.B ^[A-Za-z_][A-Za-z0-9_]*$
+.IP \(bu 4
+Entry filenames must end in
+.B .env
+(the
+.I .gpg
+suffix is added by pass automatically).
+
+.SH ENVIRONMENT
+
+.TP
+.B PASSWORD_STORE_DIR
+Root directory of the password store.  Defaults to
+.IR ~/.password-store .
+
+.TP
+.B PASS_CMD
+The
+.BR pass (1)
+executable to invoke.  Defaults to
+.BR pass .
 
 .SH SEE ALSO
-.BR pass (1)
+.BR pass (1),
+.BR gpg (1),
+.BR fzf (1)
 
 .SH AUTHOR
-thomaslaurenson
-
+Thomas Laurenson
 
 .SH HOME
 .I https://github.com/thomaslaurenson/pass-env
-
 
 .SH REPORTING BUGS
 .I https://github.com/thomaslaurenson/pass-env/issues

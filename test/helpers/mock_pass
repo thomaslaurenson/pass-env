@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Mock 'pass' executable used by the test suite.
+#
+# Reads plain-text KEY=VALUE fixture files from PASSENV_FIXTURE_CONTENT_DIR
+# instead of decrypting real GPG entries. Handles two call patterns:
+#
+#   pass show -- ENTRY        used by env.bash via the PASS_CMD variable
+#   pass env set ENTRY        used by shell-init.sh via the PATH 'pass' lookup
+#
+# Arguments:
+#   $@ - Forwarded pass arguments (see patterns above)
+# Environment:
+#   PASSENV_FIXTURE_CONTENT_DIR - directory containing plain-text fixture files
+#                                 (default: <script_dir>/../fixtures/content)
+# Outputs:
+#   stdout: entry content (show) or export lines (env set)
+#   stderr: error messages on unknown commands or missing fixtures
+# Returns:
+#   0 on success
+#   1 on unrecognised command or missing fixture
+
+FIXTURE_DIR="${PASSENV_FIXTURE_CONTENT_DIR:-$(cd "$(dirname "$0")/../fixtures/content" && pwd)}"
+
+case "${1:-}" in
+  show)
+    [[ "${2:-}" == "--" ]] || { printf 'mock_pass: expected: show -- ENTRY\n' >&2; exit 1; }
+    entry="${3:-}"
+    fixture="$FIXTURE_DIR/$entry"
+    [[ -f "$fixture" ]] || { printf 'mock_pass: no fixture for: %s\n' "$entry" >&2; exit 1; }
+    cat "$fixture"
+    ;;
+  env)
+    case "${2:-}" in
+      run)
+        (
+          shift 2  # consume 'env' and 'run'; shifts are subshell-local
+          entries=()
+          while [[ $# -gt 0 && "$1" != "--" ]]; do
+            entries+=("$1"); shift
+          done
+          [[ "${1:-}" == "--" ]] && shift
+          for entry in "${entries[@]}"; do
+            fixture="$FIXTURE_DIR/$entry"
+            [[ -f "$fixture" ]] || { printf 'mock_pass: no fixture for: %s\n' "$entry" >&2; exit 1; }
+            while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              [[ "$line" == \#* ]] && continue
+              if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+              fi
+            done < "$fixture"
+          done
+          exec "$@"
+        )
+        ;;
+      set)
+        entry="${3:-}"
+        [[ -n "$entry" ]] || { printf 'mock_pass: interactive mode not supported in tests\n' >&2; exit 1; }
+        fixture="$FIXTURE_DIR/$entry"
+        [[ -f "$fixture" ]] || { printf 'mock_pass: no fixture for: %s\n' "$entry" >&2; exit 1; }
+        # Emit export lines as env.bash's set_env would: skip blanks and comments,
+        # validate key names, and shell-quote values with printf %q.
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          [[ "$line" == \#* ]] && continue
+          if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            printf 'export %s=%q\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+          fi
+        done < "$fixture"
+        ;;
+      list)
+        store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+        find "$store_dir" -name "*.env.gpg" -type f \
+          | while IFS= read -r f; do printf '%s\n' "${f#"$store_dir/"}"; done \
+          | sed 's/\.gpg$//' \
+          | sort
+        ;;
+      *)
+        printf 'mock_pass: expected: env set|list\n' >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    printf 'mock_pass: unknown command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac

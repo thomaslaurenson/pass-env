@@ -1,16 +1,17 @@
-# passenv shell loader
-# Source this in ~/.bashrc and/or ~/.zshrc:
-#   source /path/to/pass-env/shell/loader.sh
+# pass env shell loader
 #
-# Requires: pass with the env extension, gpg, fzf (for interactive selection)
-# Compatible with bash 4+ and zsh 5.2+
+# Source this in ~/.bashrc and/or ~/.zshrc:
+# source /path/to/pass-env/contrib/pass-env-init.sh
+#
+# Requires: 
+# pass with the env extension
+# gpg (bunled with pass)
+# fzf (optional, for interactive selection)
 
-# ---------------------------------------------------------------------------
 # Initialise the tracking associative array exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
-# ---------------------------------------------------------------------------
 if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
-  declare -A _PASSENV_TRACKER
+  declare -gA _PASSENV_TRACKER
 fi
 
 # Print each key of _PASSENV_TRACKER, one per line.
@@ -34,22 +35,6 @@ _passenv_keys() {
   fi
 }
 
-# Print the runtime value of the variable named VARNAME.
-#
-# Uses eval to avoid the bash/zsh incompatibility in indirect expansion:
-# bash uses ${!name} while zsh uses ${(P)name}. The argument must be a
-# validated shell identifier; callers are responsible for this check.
-#
-# Arguments:
-#   $1 - Name of the variable to dereference
-# Outputs:
-#   stdout: current value of the named variable (no trailing newline)
-# Returns:
-#   0 always
-_passenv_indirect() {
-  eval "printf '%s' \"\${$1}\""
-}
-
 # Print each whitespace-separated word of STRING, one per line.
 #
 # Avoids the read -a (bash) vs read -A (zsh) incompatibility by relying on
@@ -62,6 +47,7 @@ _passenv_indirect() {
 # Returns:
 #   0 always
 _passenv_split_words() {
+  # shellcheck disable=SC2086  # intentional: unquoted split on whitespace
   printf '%s\n' $1
 }
 
@@ -71,7 +57,7 @@ _passenv_split_words() {
 # called with no arguments.
 #
 # Arguments:
-#   $1 - Subcommand: set | unset | list | print | help (default: help)
+#   $1 - Subcommand: set | unset | run | list | loaded | help (default: help)
 #   $@ - Additional arguments forwarded to the subcommand handler
 # Outputs:
 #   stdout: subcommand output
@@ -86,13 +72,32 @@ passenv() {
   case "$subcmd" in
     set)     _passenv_set   "$@" ;;
     unset)   _passenv_unset "$@" ;;
+    run)     _passenv_run   "$@" ;;
     list)    _passenv_list        ;;
-    print)   _passenv_print       ;;
+    loaded)  _passenv_loaded      ;;
     help|-h|--help) _passenv_help ;;
     *) printf 'passenv: unknown subcommand: %s\n' "$subcmd" >&2
        _passenv_help >&2
        return 1 ;;
   esac
+}
+
+# Execute a command with environment variables from one or more pass entries.
+#
+# Thin wrapper around 'pass env run'. Entries are decrypted and the command
+# is executed in a subshell — nothing leaks into the calling shell. Supports
+# the same argument syntax as the pass extension: ENTRY [ENTRY ...] -- CMD.
+# If no ENTRY is given before --, an interactive fzf picker is launched.
+#
+# Arguments:
+#   $@ - [ENTRY ...] -- COMMAND [ARGS...]
+# Outputs:
+#   stdout/stderr: forwarded from COMMAND
+# Returns:
+#   exit status of COMMAND
+#   1 if arguments are missing or pass env run fails
+_passenv_run() {
+  pass env run "$@"
 }
 
 # Load one or more pass entries into the current shell.
@@ -268,6 +273,19 @@ _passenv_unset() {
   done
 }
 
+# List all .env entries available in the password store.
+#
+# Delegates to 'pass env list', which walks PASSWORD_STORE_DIR and prints
+# every *.env.gpg entry path (one per line, no .gpg suffix, sorted).
+#
+# Outputs:
+#   stdout: available entry path(s), one per line
+# Returns:
+#   0 on success, non-zero if pass env list fails
+_passenv_list() {
+  pass env list
+}
+
 # Print a formatted table of all currently loaded entries and their variables.
 #
 # Outputs a two-column header table (ENTRY / VARIABLES). Uses _passenv_keys
@@ -279,7 +297,7 @@ _passenv_unset() {
 #   stdout: formatted table, or a 'no entries' message if the tracker is empty
 # Returns:
 #   0 always
-_passenv_list() {
+_passenv_loaded() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
     printf 'passenv: no entries are currently loaded\n'
     return 0
@@ -289,40 +307,6 @@ _passenv_list() {
   printf '%-40s %s\n' '----------------------------------------' '---------'
   _passenv_keys | while IFS= read -r k; do
     printf '%-40s %s\n' "$k" "${_PASSENV_TRACKER[$k]}"
-  done
-}
-
-# Print the live values of all currently tracked variables.
-#
-# Groups output by entry (prefixed with a '# ENTRY' comment line). Values for
-# variables whose names match a sensitive-word pattern (SECRET, TOKEN,
-# PASSWORD, KEY, or PASS at a word boundary) are masked as '******'.
-#
-# Environment:
-#   _PASSENV_TRACKER - associative array of loaded entries
-# Outputs:
-#   stdout: grouped KEY=VALUE lines with sensitive values masked,
-#           or a 'no entries' message if the tracker is empty
-# Returns:
-#   0 always
-_passenv_print() {
-  if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
-    printf 'passenv: no entries are currently loaded\n'
-    return 0
-  fi
-
-  _passenv_keys | while IFS= read -r k; do
-    printf '# %s\n' "$k"
-    while IFS= read -r v; do
-      [[ -z "$v" ]] && continue
-      local val
-      val="$(_passenv_indirect "$v")"
-      if printf '%s' "$v" | grep -qiE '(^|_)(SECRET|TOKEN|PASSWORD|KEY|PASS)(_|$)'; then
-        printf '  %s=%s\n' "$v" '******'
-      else
-        printf '  %s=%s\n' "$v" "$val"
-      fi
-    done < <(_passenv_split_words "${_PASSENV_TRACKER[$k]}")
   done
 }
 
@@ -337,22 +321,31 @@ _passenv_help() {
 Usage: passenv <subcommand> [ENTRY]
 
 Subcommands:
-  set   [ENTRY]   Decrypt a pass entry and load its vars into the current shell.
-                  If ENTRY is omitted, an interactive fzf picker is launched.
-                  Example:  passenv set os/undercloud.env
+  set    [ENTRY ...]            Decrypt a pass entry and load its vars into the
+                                current shell. If ENTRY is omitted, an fzf picker
+                                is launched.
+                                Example:  passenv set os/prod.env
+                                          passenv set os/prod.env api/openai.env
 
-  unset [ENTRY]   Unset the vars loaded from ENTRY in the current shell.
-                  If ENTRY is omitted, an interactive fzf picker is shown over
-                  currently loaded entries.
-                  Example:  passenv unset os/undercloud.env
+  unset  [ENTRY ...]            Unset the vars loaded from ENTRY in the current
+                                shell. If ENTRY is omitted, an fzf picker is shown
+                                over currently loaded entries.
+                                Example:  passenv unset os/prod.env
 
-  list            Print all currently loaded entries and their variable names.
+  run    [ENTRY ...] -- CMD     Decrypt one or more entries and run CMD with those
+                                vars in its environment only — nothing leaks into
+                                the current shell. If ENTRY is omitted, an fzf
+                                picker is launched.
+                                Example:  passenv run os/prod.env -- printenv MY_VAR
+                                          passenv run e1.env e2.env -- myapp
 
-  print           Print currently loaded vars and their live values.
-                  Values for vars whose names contain SECRET, TOKEN, PASSWORD,
-                  KEY, or PASS are masked as ******.
+  list                          List all .env entries available in the password
+                                store.
 
-  help            Show this message.
+  loaded                        Print all entries currently loaded in this shell
+                                session and their associated variable names.
+
+  help                          Show this message.
 
 Notes:
   - Pass entries must contain KEY=VALUE lines (one per line).
