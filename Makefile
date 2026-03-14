@@ -29,23 +29,39 @@ lint:
 	@printf 'shellcheck  src/env.bash ... '
 	@shellcheck -s bash src/env.bash \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'shellcheck  contrib/pass-env-init.sh ... '
 	@shellcheck -s bash contrib/pass-env-init.sh \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'shellcheck  scripts/install.sh ... '
+	@shellcheck -s bash scripts/install.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'shellcheck  scripts/uninstall.sh ... '
+	@shellcheck -s bash scripts/uninstall.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash -n     src/env.bash ... '
 	@bash -n src/env.bash \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'bash -n     scripts/install.sh ... '
+	@bash -n scripts/install.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'bash -n     scripts/uninstall.sh ... '
+	@bash -n scripts/uninstall.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash source contrib/pass-env-init.sh ... '
 	@bash -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'zsh  source contrib/pass-env-init.sh ... '
 	@zsh -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 
 bump-bats:
 	@printf 'Pinning bats submodule to %s\n' '$(BATS_VERSION)'
