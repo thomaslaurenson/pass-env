@@ -1,9 +1,13 @@
 SHELL := /bin/bash
 
 EXTENSION_DIR ?= /usr/lib/password-store/extensions
-MAN_DIR ?= /usr/share/man
-BASHCOMP_DIR ?= /etc/bash_completion.d
-ZSHCOMP_DIR ?= /usr/local/share/zsh/site-functions
+MAN_DIR       ?= /usr/share/man
+BASHCOMP_DIR  ?= /etc/bash_completion.d
+ZSHCOMP_DIR   ?= /usr/local/share/zsh/site-functions
+
+BATS_VERSION  ?= v1.13.0
+
+.PHONY: install uninstall lint test bump-bats
 
 install:
 	@sudo install -v -d "$(MAN_DIR)/man1"
@@ -22,4 +26,35 @@ uninstall:
 	@rm -f "$(ZSHCOMP_DIR)/_pass-env"
 
 lint:
-	shellcheck -s bash src/env.bash
+	@printf 'shellcheck  src/env.bash ... '
+	@shellcheck -s bash src/env.bash \
+	  && printf 'ok\n' \
+	  || { printf 'FAIL\n'; exit 1; }
+	@printf 'shellcheck  contrib/pass-env-init.sh ... '
+	@shellcheck -s bash contrib/pass-env-init.sh \
+	  && printf 'ok\n' \
+	  || { printf 'FAIL\n'; exit 1; }
+	@printf 'bash -n     src/env.bash ... '
+	@bash -n src/env.bash \
+	  && printf 'ok\n' \
+	  || { printf 'FAIL\n'; exit 1; }
+	@printf 'bash source contrib/pass-env-init.sh ... '
+	@bash -c 'source contrib/pass-env-init.sh' \
+	  && printf 'ok\n' \
+	  || { printf 'FAIL\n'; exit 1; }
+	@printf 'zsh  source contrib/pass-env-init.sh ... '
+	@zsh -c 'source contrib/pass-env-init.sh' \
+	  && printf 'ok\n' \
+	  || { printf 'FAIL\n'; exit 1; }
+
+bump-bats:
+	@printf 'Pinning bats submodule to %s\n' '$(BATS_VERSION)'
+	@cd test/extern/bats \
+	  && git fetch --tags \
+	  && git checkout '$(BATS_VERSION)'
+	@git add test/extern/bats
+	@printf 'Submodule staged at %s — commit when ready:\n' '$(BATS_VERSION)'
+	@printf '  git commit -m "Bump bats to %s"\n' '$(BATS_VERSION)'
+
+test:
+	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
