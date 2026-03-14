@@ -257,7 +257,7 @@ unset_env() {
   [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
 }
 
-# ---- dispatcher ----
+# Dispatch to the appropriate subcommand handler.
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
