@@ -75,11 +75,22 @@ passenv() {
     run)     _passenv_run   "$@" ;;
     list)    _passenv_list        ;;
     loaded)  _passenv_loaded      ;;
+    version|-v|--version) _passenv_version ;;
     help|-h|--help) _passenv_help ;;
     *) printf 'passenv: unknown subcommand: %s\n' "$subcmd" >&2
        _passenv_help >&2
        return 1 ;;
   esac
+}
+
+# Print the version of pass-env.
+#
+# Outputs:
+#   stdout: 'pass-env VERSION' forwarded from pass env version
+# Returns:
+#   exit status of pass env version
+_passenv_version() {
+  pass env version
 }
 
 # Execute a command with environment variables from one or more pass entries.
@@ -344,6 +355,8 @@ Subcommands:
 
   loaded                        Print all entries currently loaded in this shell
                                 session and their associated variable names.
+
+  version                       Print the installed pass-env version.
 
   help                          Show this message.
 

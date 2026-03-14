@@ -8,6 +8,15 @@
 
 bats_require_minimum_version 1.7.0
 
+# Configure the test environment before each test.
+#
+# Sets REPO_ROOT and ENV_BASH, and exports the path variables required
+# by env.bash and the mock pass command.
+#
+# Globals:
+#   BATS_TEST_DIRNAME - provided by bats
+#   PASSWORD_STORE_DIR, PASS_CMD, PASSENV_FIXTURE_CONTENT_DIR - exported
+#   ENV_BASH - set
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
@@ -16,9 +25,7 @@ setup() {
   ENV_BASH="$REPO_ROOT/src/env.bash"
 }
 
-# ---------------------------------------------------------------------------
 # Dispatcher
-# ---------------------------------------------------------------------------
 
 @test "help: exits 0 and prints usage" {
   run bash "$ENV_BASH" help
@@ -31,9 +38,7 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-# ---------------------------------------------------------------------------
 # list — store entry listing
-# ---------------------------------------------------------------------------
 
 @test "list: exits 0" {
   run bash "$ENV_BASH" list
@@ -61,9 +66,7 @@ setup() {
   [[ "$output" == "$sorted" ]]
 }
 
-# ---------------------------------------------------------------------------
 # .env suffix enforcement
-# ---------------------------------------------------------------------------
 
 @test "set: rejects entry that does not end in .env" {
   run bash "$ENV_BASH" set myentry
@@ -83,9 +86,7 @@ setup() {
   [[ "$output" =~ "must end in .env" ]]
 }
 
-# ---------------------------------------------------------------------------
 # set — output format and eval round-trip
-# ---------------------------------------------------------------------------
 
 @test "set: emits export lines for a valid entry" {
   run bash "$ENV_BASH" set myentry.env
@@ -122,9 +123,7 @@ setup() {
   [[ "$MY_OTHER" == "othervalue" ]]
 }
 
-# ---------------------------------------------------------------------------
 # unset — output format and eval round-trip
-# ---------------------------------------------------------------------------
 
 @test "unset: emits an unset statement listing all key names" {
   run bash "$ENV_BASH" unset myentry.env
@@ -141,9 +140,7 @@ setup() {
   [[ -z "${MY_VAR:-}" ]]
 }
 
-# ---------------------------------------------------------------------------
 # run — subprocess injection and isolation
-# ---------------------------------------------------------------------------
 
 @test "run: injects entry vars into the subprocess" {
   run bash "$ENV_BASH" run myentry.env -- printenv MY_VAR

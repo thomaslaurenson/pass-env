@@ -2,7 +2,17 @@
 # Place somewhere sourced by your shell, e.g. /etc/bash_completion.d/ or ~/.bash_completion.d/
 # Requires: bash-completion, pass available in PATH.
 
-# --- helper: list pass entries (no trailing ".gpg") ---
+# Print all pass entry paths from the store to stdout, one per line.
+#
+# Strips the leading ./ and .gpg suffix from each result. Output is
+# unsorted; callers are responsible for sorting if required.
+#
+# Globals:
+#   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
+# Outputs:
+#   stdout: entry paths, one per line, without the .gpg suffix
+# Returns:
+#   0 always
 __pass_env_list_entries() {
   local dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
   if [[ -d "$dir" ]]; then
@@ -11,16 +21,35 @@ __pass_env_list_entries() {
   fi
 }
 
-# --- helper: complete entries (respecting partial path components) ---
+# Append entry completions for the current token to COMPREPLY.
+#
+# Feeds all store entries through compgen so that partial path components
+# are respected (e.g. `os/` narrows to entries under that prefix).
+#
+# Arguments:
+#   $1 - Current token being completed (forwarded to compgen)
+# Globals:
+#   COMPREPLY - appended with matching entries
+# Returns:
+#   0 always
 __pass_env_complete_entries() {
   local cur="$1"
-  # Produce a list and then use compgen against current token
   local IFS=$'\n'
   local all=( $(__pass_env_list_entries) )
   COMPREPLY+=( $(compgen -W "${all[*]}" -- "$cur") )
 }
 
-# --- dispatcher for `pass env` ---
+# Main bash completion function for `pass env`.
+#
+# Locates the `env` token in COMP_WORDS, derives the subcommand, and
+# delegates to per-subcommand completion logic. Registered via the
+# PASSWORD_STORE_EXTENSION_COMMANDS mechanism at the bottom of this file.
+#
+# Globals:
+#   COMPREPLY - set with completion candidates
+#   PASSWORD_STORE_DIR - read indirectly by __pass_env_list_entries
+# Returns:
+#   0 always
 __pass_env() {
   local cur prev words cword i j
   _init_completion -n : || return

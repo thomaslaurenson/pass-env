@@ -7,7 +7,7 @@ ZSHCOMP_DIR   ?= /usr/local/share/zsh/site-functions
 
 BATS_VERSION  ?= v1.13.0
 
-.PHONY: install uninstall lint test bump-bats
+.PHONY: install uninstall lint test bump-bats release
 
 install:
 	@sudo install -v -d "$(MAN_DIR)/man1"
@@ -29,23 +29,39 @@ lint:
 	@printf 'shellcheck  src/env.bash ... '
 	@shellcheck -s bash src/env.bash \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'shellcheck  contrib/pass-env-init.sh ... '
 	@shellcheck -s bash contrib/pass-env-init.sh \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'shellcheck  scripts/install.sh ... '
+	@shellcheck -s bash scripts/install.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'shellcheck  scripts/uninstall.sh ... '
+	@shellcheck -s bash scripts/uninstall.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash -n     src/env.bash ... '
 	@bash -n src/env.bash \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'bash -n     scripts/install.sh ... '
+	@bash -n scripts/install.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
+	@printf 'bash -n     scripts/uninstall.sh ... '
+	@bash -n scripts/uninstall.sh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash source contrib/pass-env-init.sh ... '
 	@bash -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 	@printf 'zsh  source contrib/pass-env-init.sh ... '
 	@zsh -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
-	  || { printf 'FAIL\n'; exit 1; }
+	  || { printf 'fail\n'; exit 1; }
 
 bump-bats:
 	@printf 'Pinning bats submodule to %s\n' '$(BATS_VERSION)'
@@ -58,3 +74,12 @@ bump-bats:
 
 test:
 	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+
+release:
+	$(eval TAG := v$(shell sed -n 's/^VERSION="\(.*\)"/\1/p' src/env.bash))
+	@[ -n "$(TAG)" ] || { printf 'release: could not read VERSION from src/env.bash\n'; exit 1; }
+	@printf 'Tagging release %s\n' '$(TAG)'
+	@git diff --quiet && git diff --cached --quiet \
+	  || { printf 'release: working tree is dirty — commit or stash first\n'; exit 1; }
+	git tag -a '$(TAG)' -m 'Release $(TAG)'
+	git push origin '$(TAG)'

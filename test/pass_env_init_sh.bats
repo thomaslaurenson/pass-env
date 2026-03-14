@@ -8,12 +8,19 @@
 
 bats_require_minimum_version 1.7.0
 
+# Configure the test environment before each test.
+#
+# Places mock_pass on PATH as 'pass', exports store path variables, and
+# sources pass-env-init.sh so the passenv shell function is available.
+#
+# Globals:
+#   BATS_TEST_DIRNAME, BATS_TEST_TMPDIR - provided by bats
+#   PASSWORD_STORE_DIR, PASSENV_FIXTURE_CONTENT_DIR, PATH - exported
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
   export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
 
-  # Place mock_pass on PATH as 'pass' so pass-env-init.sh's 'pass env set' works.
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   ln -sf "$REPO_ROOT/test/helpers/mock_pass" "$BATS_TEST_TMPDIR/bin/pass"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
@@ -22,9 +29,7 @@ setup() {
   source "$REPO_ROOT/contrib/pass-env-init.sh"
 }
 
-# ---------------------------------------------------------------------------
 # passenv set — loading entries into the shell
-# ---------------------------------------------------------------------------
 
 @test "set: exports the entry's variables into the current shell" {
   passenv set "myentry.env"
@@ -52,9 +57,7 @@ setup() {
   [[ -n "${_PASSENV_TRACKER[second.env]:-}" ]]
 }
 
-# ---------------------------------------------------------------------------
 # passenv unset — removing entries from the shell
-# ---------------------------------------------------------------------------
 
 @test "unset: removes the entry's variables from the shell" {
   passenv set "myentry.env"
@@ -82,9 +85,7 @@ setup() {
   [[ "$output" =~ "no entries" ]]
 }
 
-# ---------------------------------------------------------------------------
 # passenv run — subprocess injection and isolation
-# ---------------------------------------------------------------------------
 
 @test "run: injects entry vars into the subprocess" {
   run passenv run "myentry.env" -- printenv MY_VAR
@@ -108,9 +109,7 @@ setup() {
   [ "$status" -eq 42 ]
 }
 
-# ---------------------------------------------------------------------------
 # passenv list — store entry listing
-# ---------------------------------------------------------------------------
 
 @test "list: exits 0 and lists available store entries" {
   run passenv list
@@ -125,9 +124,7 @@ setup() {
   ! [[ "$output" =~ ".gpg" ]]
 }
 
-# ---------------------------------------------------------------------------
 # passenv loaded — tracker state display
-# ---------------------------------------------------------------------------
 
 @test "loaded: shows all currently loaded entries" {
   passenv set "myentry.env" "second.env"
@@ -150,13 +147,10 @@ setup() {
   [[ "$output" =~ "no entries" ]]
 }
 
-# ---------------------------------------------------------------------------
 # Loader guard — re-sourcing does not clear the tracker
-# ---------------------------------------------------------------------------
 
 @test "re-sourcing the loader does not reset a populated tracker" {
   passenv set "myentry.env"
   source "$REPO_ROOT/contrib/pass-env-init.sh"
   [[ -n "${_PASSENV_TRACKER[myentry.env]:-}" ]]
 }
-

@@ -11,7 +11,15 @@
 #   sudo cp _pass-env /usr/local/share/zsh/site-functions/    (macOS/Homebrew)
 #   sudo cp _pass-env /usr/share/zsh/site-functions/          (Linux)
 
-# --- helper: list pass entries ---
+# Populate zsh completions with all pass entry paths from the store.
+#
+# Strips the .gpg suffix and sorts entries. Registered via compadd so zsh's
+# completion system can apply path-component matching.
+#
+# Globals:
+#   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
+# Returns:
+#   0 always
 _pass_env_entries() {
   local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
   [[ -d "$password_store_dir" ]] || return 0
@@ -24,7 +32,15 @@ _pass_env_entries() {
   compadd -M 'r:|/=* r:|=*' -a entries
 }
 
-# --- main completion function ---
+# Main zsh completion function for `pass env`.
+#
+# Handles subcommand completion and per-subcommand argument completion.
+# Registered via the `#compdef -P pass\ env*` directive at the top of this
+# file. Strips the leading `pass env` tokens from $words so $words[1] is
+# always the subcommand.
+#
+# Returns:
+#   0 always
 _pass_env() {
   local state
 

@@ -9,6 +9,8 @@
 
 set -euo pipefail
 
+VERSION="0.1.0"
+
 PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
 
 # Print an error message to stderr and exit with status 1.
@@ -98,6 +100,7 @@ _resolve_entry() {
 help() {
   cat <<'EOF'
 Usage:
+  pass env version
   pass env list
   pass env run   [ENTRY [ENTRY ...]] -- COMMAND [ARGS...]
   pass env set   [ENTRY [ENTRY ...]]
@@ -125,6 +128,16 @@ Notes:
               eval "$(pass env set os/prod.env)"
               eval "$(pass env unset os/prod.env)"
 EOF
+}
+
+# Print the version of pass-env.
+#
+# Outputs:
+#   stdout: 'pass-env VERSION'
+# Returns:
+#   0 always
+version() {
+  printf 'pass-env %s\n' "$VERSION"
 }
 
 # List all .env entries available in the password store.
@@ -257,10 +270,11 @@ unset_env() {
   [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
 }
 
-# ---- dispatcher ----
+# Dispatch to the appropriate subcommand handler.
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) help ;;
+  version|-v|--version) version ;;
   list) list_entries ;;
   run)
     raw_entries=()
