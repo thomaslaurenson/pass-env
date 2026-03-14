@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
+
 # pass extension: env
-# Location: ~/.password-store/.extensions/env.bash
-# Usage: pass env <subcommand> [flags]
+#
+# Requires: 
+# pass with the env extension
+# gpg (bunled with pass)
+# fzf (optional, for interactive selection)
 
 set -euo pipefail
 
-PASS_CMD="pass"  # in case you need to call back into pass
+PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -274,10 +278,12 @@ case "$cmd" in
       esac
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
-      while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "")
+      resolved="$(_resolve_entry "")" || exit 1
+      while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
-        while IFS= read -r e; do set_env "$e"; done < <(_resolve_entry "$raw_e")
+        resolved="$(_resolve_entry "$raw_e")" || exit 1
+        while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
       done
     fi
     ;;
@@ -291,10 +297,12 @@ case "$cmd" in
       esac
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
-      while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "")
+      resolved="$(_resolve_entry "")" || exit 1
+      while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
-        while IFS= read -r e; do unset_env "$e"; done < <(_resolve_entry "$raw_e")
+        resolved="$(_resolve_entry "$raw_e")" || exit 1
+        while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
       done
     fi
     ;;

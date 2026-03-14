@@ -1,16 +1,17 @@
-# passenv shell loader
-# Source this in ~/.bashrc and/or ~/.zshrc:
-#   source /path/to/pass-env/shell/loader.sh
+# pass env shell loader
 #
-# Requires: pass with the env extension, gpg, fzf (for interactive selection)
-# Compatible with bash 4+ and zsh 5.2+
+# Source this in ~/.bashrc and/or ~/.zshrc:
+# source /path/to/pass-env/shell/loader.sh
+#
+# Requires: 
+# pass with the env extension
+# gpg (bunled with pass)
+# fzf (optional, for interactive selection)
 
-# ---------------------------------------------------------------------------
 # Initialise the tracking associative array exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
-# ---------------------------------------------------------------------------
 if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
-  declare -A _PASSENV_TRACKER
+  declare -gA _PASSENV_TRACKER
 fi
 
 # Print each key of _PASSENV_TRACKER, one per line.
