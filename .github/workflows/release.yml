@@ -10,6 +10,16 @@ jobs:
         with:
           submodules: true
 
+      - name: Verify version matches tag
+        run: |
+          version=$(grep '^VERSION=' src/env.bash | sed 's/VERSION="\(.*\)"/\1/')
+          tag="${{ github.ref_name }}"
+          expected="${tag#v}"
+          if [[ "$version" != "$expected" ]]; then
+            echo "ERROR: VERSION in src/env.bash ($version) does not match tag ($tag)"
+            exit 1
+          fi
+
       - name: Build tarball
         run: |
           version="${{ github.ref_name }}"

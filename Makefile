@@ -7,7 +7,7 @@ ZSHCOMP_DIR   ?= /usr/local/share/zsh/site-functions
 
 BATS_VERSION  ?= v1.13.0
 
-.PHONY: install uninstall lint test bump-bats
+.PHONY: install uninstall lint test bump-bats release
 
 install:
 	@sudo install -v -d "$(MAN_DIR)/man1"
@@ -74,3 +74,12 @@ bump-bats:
 
 test:
 	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+
+release:
+	$(eval TAG := v$(shell sed -n 's/^VERSION="\(.*\)"/\1/p' src/env.bash))
+	@[ -n "$(TAG)" ] || { printf 'release: could not read VERSION from src/env.bash\n'; exit 1; }
+	@printf 'Tagging release %s\n' '$(TAG)'
+	@git diff --quiet && git diff --cached --quiet \
+	  || { printf 'release: working tree is dirty — commit or stash first\n'; exit 1; }
+	git tag -a '$(TAG)' -m 'Release $(TAG)'
+	git push origin '$(TAG)'
