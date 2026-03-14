@@ -83,6 +83,32 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
+# passenv run — subprocess injection and isolation
+# ---------------------------------------------------------------------------
+
+@test "run: injects entry vars into the subprocess" {
+  run passenv run "myentry.env" -- printenv MY_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue" ]]
+}
+
+@test "run: vars do not leak into the calling shell" {
+  passenv run "myentry.env" -- true
+  [[ -z "${MY_VAR:-}" ]]
+}
+
+@test "run: multiple entries are each visible inside the subprocess" {
+  run passenv run "myentry.env" "second.env" -- bash -c 'printf "%s %s" "$MY_VAR" "$SECOND_VAR"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue secondvalue" ]]
+}
+
+@test "run: preserves the exit status of the subprocess" {
+  run passenv run "myentry.env" -- bash -c 'exit 42'
+  [ "$status" -eq 42 ]
+}
+
+# ---------------------------------------------------------------------------
 # passenv list — store entry listing
 # ---------------------------------------------------------------------------
 

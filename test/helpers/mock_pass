@@ -31,6 +31,28 @@ case "${1:-}" in
     ;;
   env)
     case "${2:-}" in
+      run)
+        (
+          shift 2  # consume 'env' and 'run'; shifts are subshell-local
+          entries=()
+          while [[ $# -gt 0 && "$1" != "--" ]]; do
+            entries+=("$1"); shift
+          done
+          [[ "${1:-}" == "--" ]] && shift
+          for entry in "${entries[@]}"; do
+            fixture="$FIXTURE_DIR/$entry"
+            [[ -f "$fixture" ]] || { printf 'mock_pass: no fixture for: %s\n' "$entry" >&2; exit 1; }
+            while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              [[ "$line" == \#* ]] && continue
+              if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+              fi
+            done < "$fixture"
+          done
+          exec "$@"
+        )
+        ;;
       set)
         entry="${3:-}"
         [[ -n "$entry" ]] || { printf 'mock_pass: interactive mode not supported in tests\n' >&2; exit 1; }

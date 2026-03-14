@@ -1,7 +1,7 @@
 # pass env shell loader
 #
 # Source this in ~/.bashrc and/or ~/.zshrc:
-# source /path/to/pass-env/shell/loader.sh
+# source /path/to/pass-env/contrib/pass-env-init.sh
 #
 # Requires: 
 # pass with the env extension
@@ -57,7 +57,7 @@ _passenv_split_words() {
 # called with no arguments.
 #
 # Arguments:
-#   $1 - Subcommand: set | unset | list | loaded | help (default: help)
+#   $1 - Subcommand: set | unset | run | list | loaded | help (default: help)
 #   $@ - Additional arguments forwarded to the subcommand handler
 # Outputs:
 #   stdout: subcommand output
@@ -72,6 +72,7 @@ passenv() {
   case "$subcmd" in
     set)     _passenv_set   "$@" ;;
     unset)   _passenv_unset "$@" ;;
+    run)     _passenv_run   "$@" ;;
     list)    _passenv_list        ;;
     loaded)  _passenv_loaded      ;;
     help|-h|--help) _passenv_help ;;
@@ -79,6 +80,24 @@ passenv() {
        _passenv_help >&2
        return 1 ;;
   esac
+}
+
+# Execute a command with environment variables from one or more pass entries.
+#
+# Thin wrapper around 'pass env run'. Entries are decrypted and the command
+# is executed in a subshell — nothing leaks into the calling shell. Supports
+# the same argument syntax as the pass extension: ENTRY [ENTRY ...] -- CMD.
+# If no ENTRY is given before --, an interactive fzf picker is launched.
+#
+# Arguments:
+#   $@ - [ENTRY ...] -- COMMAND [ARGS...]
+# Outputs:
+#   stdout/stderr: forwarded from COMMAND
+# Returns:
+#   exit status of COMMAND
+#   1 if arguments are missing or pass env run fails
+_passenv_run() {
+  pass env run "$@"
 }
 
 # Load one or more pass entries into the current shell.
@@ -302,21 +321,31 @@ _passenv_help() {
 Usage: passenv <subcommand> [ENTRY]
 
 Subcommands:
-  set    [ENTRY]  Decrypt a pass entry and load its vars into the current shell.
-                  If ENTRY is omitted, an interactive fzf picker is launched.
-                  Example:  passenv set os/undercloud.env
+  set    [ENTRY ...]            Decrypt a pass entry and load its vars into the
+                                current shell. If ENTRY is omitted, an fzf picker
+                                is launched.
+                                Example:  passenv set os/prod.env
+                                          passenv set os/prod.env api/openai.env
 
-  unset  [ENTRY]  Unset the vars loaded from ENTRY in the current shell.
-                  If ENTRY is omitted, an interactive fzf picker is shown over
-                  currently loaded entries.
-                  Example:  passenv unset os/undercloud.env
+  unset  [ENTRY ...]            Unset the vars loaded from ENTRY in the current
+                                shell. If ENTRY is omitted, an fzf picker is shown
+                                over currently loaded entries.
+                                Example:  passenv unset os/prod.env
 
-  list            List all .env entries available in the password store.
+  run    [ENTRY ...] -- CMD     Decrypt one or more entries and run CMD with those
+                                vars in its environment only — nothing leaks into
+                                the current shell. If ENTRY is omitted, an fzf
+                                picker is launched.
+                                Example:  passenv run os/prod.env -- printenv MY_VAR
+                                          passenv run e1.env e2.env -- myapp
 
-  loaded          Print all entries currently loaded in this shell session
-                  and their associated variable names.
+  list                          List all .env entries available in the password
+                                store.
 
-  help            Show this message.
+  loaded                        Print all entries currently loaded in this shell
+                                session and their associated variable names.
+
+  help                          Show this message.
 
 Notes:
   - Pass entries must contain KEY=VALUE lines (one per line).
