@@ -83,67 +83,43 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
-# passenv list
+# passenv list — store entry listing
 # ---------------------------------------------------------------------------
 
-@test "list: shows all currently loaded entries" {
-  passenv set "myentry.env" "second.env"
+@test "list: exits 0 and lists available store entries" {
   run passenv list
   [ "$status" -eq 0 ]
   [[ "$output" =~ "myentry.env" ]]
   [[ "$output" =~ "second.env" ]]
 }
 
-@test "list: reports that no entries are loaded when tracker is empty" {
+@test "list: strips the .gpg suffix from entry names" {
   run passenv list
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "no entries" ]]
+  ! [[ "$output" =~ ".gpg" ]]
 }
 
 # ---------------------------------------------------------------------------
-# passenv print — value display and sensitive-value masking
+# passenv loaded — tracker state display
 # ---------------------------------------------------------------------------
 
-@test "print: shows the value of a non-sensitive variable" {
-  passenv set "myentry.env"
-  run passenv print
+@test "loaded: shows all currently loaded entries" {
+  passenv set "myentry.env" "second.env"
+  run passenv loaded
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "myvalue" ]]
+  [[ "$output" =~ "myentry.env" ]]
+  [[ "$output" =~ "second.env" ]]
 }
 
-@test "print: masks a variable whose name contains PASSWORD" {
-  export MY_PASSWORD=supersecret
-  _PASSENV_TRACKER["myentry.env"]="MY_PASSWORD"
-  run passenv print
-  [[ "$output" =~ "MY_PASSWORD=******" ]]
-  ! [[ "$output" =~ "supersecret" ]]
+@test "loaded: includes variable names for each loaded entry" {
+  passenv set "myentry.env"
+  run passenv loaded
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "MY_VAR" ]]
 }
 
-@test "print: masks a variable whose name contains SECRET" {
-  export API_SECRET=topsecret
-  _PASSENV_TRACKER["myentry.env"]="API_SECRET"
-  run passenv print
-  [[ "$output" =~ "API_SECRET=******" ]]
-  ! [[ "$output" =~ "topsecret" ]]
-}
-
-@test "print: masks a variable whose name contains TOKEN" {
-  export GITHUB_TOKEN=ghp_abc123
-  _PASSENV_TRACKER["myentry.env"]="GITHUB_TOKEN"
-  run passenv print
-  [[ "$output" =~ "GITHUB_TOKEN=******" ]]
-  ! [[ "$output" =~ "ghp_abc123" ]]
-}
-
-@test "print: does not mask PASSPORT_NUM (PASS not at a word boundary)" {
-  export PASSPORT_NUM=AB1234
-  _PASSENV_TRACKER["myentry.env"]="PASSPORT_NUM"
-  run passenv print
-  [[ "$output" =~ "AB1234" ]]
-}
-
-@test "print: reports that no entries are loaded when tracker is empty" {
-  run passenv print
+@test "loaded: reports that no entries are loaded when tracker is empty" {
+  run passenv loaded
   [ "$status" -eq 0 ]
   [[ "$output" =~ "no entries" ]]
 }

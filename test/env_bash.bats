@@ -32,6 +32,36 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
+# list — store entry listing
+# ---------------------------------------------------------------------------
+
+@test "list: exits 0" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+}
+
+@test "list: prints .env entries found in the fixture store" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "myentry.env" ]]
+  [[ "$output" =~ "second.env" ]]
+  [[ "$output" =~ "withcomments.env" ]]
+}
+
+@test "list: strips the .gpg suffix from entry names" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ ".gpg" ]]
+}
+
+@test "list: output is sorted alphabetically" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  sorted="$(printf '%s\n' "$output" | sort)"
+  [[ "$output" == "$sorted" ]]
+}
+
+# ---------------------------------------------------------------------------
 # .env suffix enforcement
 # ---------------------------------------------------------------------------
 
