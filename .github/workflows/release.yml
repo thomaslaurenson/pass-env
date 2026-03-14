@@ -1,0 +1,35 @@
+name: Release
+
+on: workflow_call
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build tarball
+        run: |
+          version="${{ github.ref_name }}"
+          archive="pass-env-${version}.tar.gz"
+          git archive --prefix="pass-env-${version}/" HEAD | gzip > "${archive}"
+          echo "ARCHIVE=${archive}" >> "$GITHUB_ENV"
+
+      - name: Bake version into install.sh
+        run: |
+          cp scripts/install.sh install.sh
+          sed -i 's/^VERSION=.*/VERSION="${{ github.ref_name }}"/' install.sh
+
+      - name: Generate checksums
+        run: |
+          sha256sum "${{ env.ARCHIVE }}" install.sh > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ARCHIVE }}
+            install.sh
+            checksums.txt

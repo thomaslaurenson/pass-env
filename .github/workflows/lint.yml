@@ -1,0 +1,15 @@
+name: Lint
+
+on: workflow_call
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: sudo apt-get install -y shellcheck zsh
+
+      - name: Run linter
+        run: make lint
