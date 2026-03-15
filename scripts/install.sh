@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 
 # pass-env installer
-#
-# Usage (local clone):
-#   bash scripts/install.sh [OPTIONS]
 
 set -euo pipefail
 
@@ -134,7 +131,8 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)       show_help; exit 0 ;;
-      --tag)           TAG="$2"; shift 2 ;;
+      --tag)           [[ $# -ge 2 ]] || error "--tag requires a version argument (e.g. --tag v1.2.3)"
+                         TAG="$2"; shift 2 ;;
       --user)          INSTALL_TYPE="user";   shift ;;
       --system)        INSTALL_TYPE="system"; shift ;;
       --no-completion) NO_COMPLETION=true;    shift ;;
@@ -210,6 +208,28 @@ brew_prefix() {
   if command -v brew &>/dev/null; then brew --prefix; else printf ''; fi
 }
 
+# Return the best system zsh site-functions directory on Linux.
+#
+# Probes known distribution paths in preference order and returns the first
+# one that already exists on disk. Falls back to /usr/local/share/zsh/site-functions
+# when none of the candidates are present yet.
+#
+# Outputs:
+#   stdout: absolute path to the zsh site-functions directory
+# Returns:
+#   0 always
+detect_zsh_comp_dir() {
+  local candidates=(
+    "/usr/share/zsh/site-functions"        # Fedora, Arch, openSUSE
+    "/usr/share/zsh/vendor-completions"    # Debian, Ubuntu
+    "/usr/local/share/zsh/site-functions"  # fallback
+  )
+  for dir in "${candidates[@]}"; do
+    [[ -d "$dir" ]] && printf '%s' "$dir" && return
+  done
+  printf '%s' "${candidates[2]}"
+}
+
 # Set installation path variables based on OS and install type.
 #
 # Populates EXTENSION_DIR, MAN_DIR, BASH_COMP_DIR, ZSH_COMP_DIR, and
@@ -255,7 +275,7 @@ resolve_paths() {
       EXTENSION_DIR="/usr/lib/password-store/extensions"
       MAN_DIR="/usr/share/man"
       BASH_COMP_DIR="/etc/bash_completion.d"
-      ZSH_COMP_DIR="/usr/local/share/zsh/site-functions"
+      ZSH_COMP_DIR="$(detect_zsh_comp_dir)"
       INIT_SCRIPT_DIR="/usr/local/share/pass-env"
     fi
   fi
@@ -269,7 +289,7 @@ resolve_paths() {
 #   0 on success
 maybe_mkdir() {
   local dir="$1"
-  mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir"
+  mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
 }
 
 # Install a file to a destination path, using sudo when the destination
@@ -374,6 +394,92 @@ download_tarball() {
   fi
 }
 
+# Download and verify the SHA-256 checksum of a release tarball.
+#
+# Downloads checksums.txt from the same release, locates the entry for the
+# tarball filename, and compares it against the local file. Skips verification
+# with a warning when neither sha256sum nor shasum is available.
+#
+# Arguments:
+#   $1 - Version tag (e.g. v1.2.3)
+#   $2 - Local path to the downloaded tarball
+# Globals:
+#   BASE_URL - read for the download URL prefix
+# Returns:
+#   0 on success
+#   exits 1 if the hash does not match or checksums.txt cannot be downloaded
+verify_checksum() {
+  local version="$1"
+  local tarball="$2"
+  local tarball_name
+  tarball_name="$(basename "$tarball")"
+
+  local sum_cmd=""
+  if command -v sha256sum &>/dev/null; then
+    sum_cmd="sha256sum"
+  elif command -v shasum &>/dev/null; then
+    sum_cmd="shasum -a 256"
+  else
+    warn "sha256sum/shasum not found; skipping checksum verification."
+    return 0
+  fi
+
+  info "Verifying checksum..."
+  local checksums_url="${BASE_URL}/download/${version}/checksums.txt"
+  local checksums_file="${tarball%/*}/checksums.txt"
+
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$checksums_url" -o "$checksums_file" \
+      || error "Failed to download checksums.txt: $checksums_url"
+  elif command -v wget &>/dev/null; then
+    wget -qO "$checksums_file" "$checksums_url" \
+      || error "Failed to download checksums.txt: $checksums_url"
+  else
+    error "curl or wget is required"
+  fi
+
+  local expected_hash
+  expected_hash="$(grep " ${tarball_name}$" "$checksums_file" | awk '{print $1}')"
+  [[ -n "$expected_hash" ]] \
+    || error "No checksum entry found for ${tarball_name} in checksums.txt"
+
+  local actual_hash
+  actual_hash="$(${sum_cmd} "$tarball" | awk '{print $1}')"
+
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    error "Checksum mismatch for ${tarball_name}:
+  expected: ${expected_hash}
+  actual:   ${actual_hash}"
+  fi
+  step "SHA-256 OK"
+}
+
+# Verify that all expected source files are present in a directory.
+#
+# Called after extracting a release tarball or pointing at a local clone to
+# catch incomplete downloads or wrong tarball structures early, before any
+# files are installed.
+#
+# Arguments:
+#   $1 - Source directory root to check
+# Returns:
+#   0 if all required files are present
+#   exits 1 if any expected file is missing
+validate_src_dir() {
+  local dir="$1"
+  local required=(
+    "src/env.bash"
+    "man/pass-env.1"
+    "completion/pass-env.bash.completion"
+    "completion/_pass-env"
+    "contrib/pass-env-init.sh"
+  )
+  for rel in "${required[@]}"; do
+    [[ -f "${dir}/${rel}" ]] \
+      || error "Expected file not found in source: ${dir}/${rel}"
+  done
+}
+
 # Detect which shells to configure based on the running shell and RC files.
 #
 # Returns a space-separated list of shell names ("bash", "zsh", or both). When
@@ -423,7 +529,8 @@ EXT_SENTINEL_END="# pass-env-extensions END"
 #
 # The block is wrapped in BEGIN/END sentinel comments so the uninstaller can
 # find and remove it. The operation is idempotent: if the sentinel is already
-# present the file is left unchanged.
+# present the file is left unchanged. If the RC file does not exist it is
+# created with an info message.
 #
 # Arguments:
 #   $1 - Path to the RC file (e.g. ~/.bashrc)
@@ -431,14 +538,17 @@ EXT_SENTINEL_END="# pass-env-extensions END"
 # Globals:
 #   RC_SENTINEL_BEGIN, RC_SENTINEL_END - read for sentinel strings
 # Outputs:
-#   stdout: status message via step()
+#   stdout: info message if file is created; [skipped] or [added] line
 # Returns:
 #   0 always
 inject_rc() {
   local rc_file="$1"
   local init_script_path="$2"
 
-  [[ -f "$rc_file" ]] || touch "$rc_file"
+  if [[ ! -f "$rc_file" ]]; then
+    info "Creating ${rc_file}"
+    touch "$rc_file"
+  fi
 
   if grep -qF "$RC_SENTINEL_BEGIN" "$rc_file"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
@@ -460,19 +570,23 @@ EOF
 #
 # Uses its own sentinel pair so it can be managed independently of the
 # pass-env-init block. Idempotent: skips if the sentinel is already present.
+# If the RC file does not exist it is created with an info message.
 #
 # Arguments:
 #   $1 - Path to the RC file (e.g. ~/.bashrc)
 # Globals:
 #   EXT_SENTINEL_BEGIN, EXT_SENTINEL_END - read for sentinel strings
 # Outputs:
-#   stdout: green [added] or [skipped] line
+#   stdout: info message if file is created; green [added] or [skipped] line
 # Returns:
 #   0 always
 inject_extensions_rc() {
   local rc_file="$1"
 
-  [[ -f "$rc_file" ]] || touch "$rc_file"
+  if [[ ! -f "$rc_file" ]]; then
+    info "Creating ${rc_file}"
+    touch "$rc_file"
+  fi
 
   if grep -qF "$EXT_SENTINEL_BEGIN" "$rc_file"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
@@ -532,6 +646,8 @@ main() {
 
   detect_local_source
   resolve_version
+  [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || error "Invalid version format: ${VERSION}"
   resolve_paths "$os" "$INSTALL_TYPE"
   detect_needs_enable_extensions
   show_summary "$VERSION" "$os"
@@ -548,12 +664,22 @@ main() {
 
     local tarball="${tmp_dir}/pass-env-${VERSION}.tar.gz"
     download_tarball "$VERSION" "$tarball"
+    verify_checksum  "$VERSION" "$tarball"
 
     info "Extracting archive..."
     tar -xzf "$tarball" -C "$tmp_dir"
 
     src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
     [[ -d "$src_dir" ]] || error "Could not locate extracted source directory"
+  fi
+
+  validate_src_dir "$src_dir"
+
+  # Detect shells once; reused for completions, init, and extensions steps.
+  local shells
+  shells="$(detect_shells)"
+  if [[ -z "$shells" ]]; then
+    warn "Could not detect a supported shell; skipping completion and shell integration."
   fi
 
   # 1. Install the pass extension.
@@ -570,9 +696,6 @@ main() {
 
   # 3. Install shell completion.
   if [[ "$NO_COMPLETION" == false ]]; then
-    local shells
-    shells="$(detect_shells)"
-
     if [[ "$shells" == *"bash"* ]]; then
       maybe_mkdir "$BASH_COMP_DIR"
       maybe_install 0644 \
@@ -598,8 +721,6 @@ main() {
       "${INIT_SCRIPT_DIR}/pass-env-init.sh"
     added "${INIT_SCRIPT_DIR}/pass-env-init.sh"
 
-    local shells
-    shells="$(detect_shells)"
     local init_path="${INIT_SCRIPT_DIR}/pass-env-init.sh"
 
     [[ "$shells" == *"bash"* ]] && inject_rc "${HOME}/.bashrc" "$init_path"
@@ -609,10 +730,8 @@ main() {
   # 5. Inject PASSWORD_STORE_ENABLE_EXTENSIONS into RC file(s) if required.
   if [[ "$NEEDS_ENABLE_EXTENSIONS" == true ]]; then
     if [[ "$NO_INIT" == false ]]; then
-      local ext_shells
-      ext_shells="$(detect_shells)"
-      [[ "$ext_shells" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
-      [[ "$ext_shells" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
+      [[ "$shells" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
+      [[ "$shells" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
     else
       warn "PASSWORD_STORE_ENABLE_EXTENSIONS=true is required for pass to load"
       warn "this extension. Add the following line to your shell RC file:"
