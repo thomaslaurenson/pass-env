@@ -44,7 +44,13 @@ error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 #
 # Arguments:
 #   $1 - Message text
-step()  { printf "  ${CYAN}→${NC} %s\n" "$1"; }
+step()  { printf "  ${CYAN} - ${NC} %s\n" "$1"; }
+
+# Print a green [added] line for an installed file path.
+#
+# Arguments:
+#   $1 - Destination file path
+added() { printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$1"; }
 
 # User-settable options; populated by parse_args().
 INSTALL_TYPE="user"    # user | system
@@ -395,7 +401,7 @@ inject_rc() {
   [[ -f "$rc_file" ]] || touch "$rc_file"
 
   if grep -qF "$RC_SENTINEL_BEGIN" "$rc_file"; then
-    step "$(basename "$rc_file"): pass-env-init already present — skipping"
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
     return 0
   fi
 
@@ -406,7 +412,7 @@ ${RC_SENTINEL_BEGIN}
 [[ -f "${init_script_path}" ]] && source "${init_script_path}"
 ${RC_SENTINEL_END}
 EOF
-  step "Injected source line into ${rc_file}"
+  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$rc_file"
 }
 
 # Print a pre-install summary of resolved paths and options.
@@ -424,16 +430,14 @@ EOF
 show_summary() {
   local version="$1"
   local os="$2"
-  printf '\n'
-  printf '  %-24s %s\n' "pass-env version:"  "$version"
-  printf '  %-24s %s\n' "Install type:"      "$INSTALL_TYPE"
-  printf '  %-24s %s\n' "OS:"                "$os"
-  printf '  %-24s %s\n' "Extension dir:"     "$EXTENSION_DIR"
-  [[ "$NO_MAN" == false ]]        && printf '  %-24s %s\n' "Man dir:"         "${MAN_DIR}/man1"
-  [[ "$NO_COMPLETION" == false ]] && printf '  %-24s %s\n' "Bash completion:" "$BASH_COMP_DIR"
-  [[ "$NO_COMPLETION" == false ]] && printf '  %-24s %s\n' "Zsh completion:"  "$ZSH_COMP_DIR"
-  [[ "$NO_INIT" == false ]]       && printf '  %-24s %s\n' "Init script dir:" "$INIT_SCRIPT_DIR"
-  printf '\n'
+  info "$(printf '%-24s %s' "pass-env version:"  "$version")"
+  info "$(printf '%-24s %s' "Install type:"      "$INSTALL_TYPE")"
+  info "$(printf '%-24s %s' "OS:"                "$os")"
+  info "$(printf '%-24s %s' "Extension dir:"     "$EXTENSION_DIR")"
+  [[ "$NO_MAN" == false ]]        && info "$(printf '%-24s %s' "Man dir:"         "${MAN_DIR}/man1")"
+  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Bash completion:" "$BASH_COMP_DIR")"
+  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Zsh completion:"  "$ZSH_COMP_DIR")"
+  [[ "$NO_INIT" == false ]]       && info "$(printf '%-24s %s' "Init script dir:" "$INIT_SCRIPT_DIR")"
 }
 
 # Main entry point. Parses arguments, resolves version and paths, downloads
@@ -459,6 +463,7 @@ main() {
 
   if [[ -n "$LOCAL_SRC" ]]; then
     info "Installing from local source: ${LOCAL_SRC}"
+    printf '\n'
     src_dir="$LOCAL_SRC"
   else
     local tmp_dir
@@ -476,22 +481,19 @@ main() {
   fi
 
   # 1. Install the pass extension.
-  info "Installing pass extension..."
   maybe_mkdir "$EXTENSION_DIR"
   maybe_install 0755 "${src_dir}/src/env.bash" "${EXTENSION_DIR}/env.bash"
-  step "env.bash  →  ${EXTENSION_DIR}/env.bash"
+  added "${EXTENSION_DIR}/env.bash"
 
   # 2. Install the man page.
   if [[ "$NO_MAN" == false ]]; then
-    info "Installing man page..."
     maybe_mkdir "${MAN_DIR}/man1"
     maybe_install 0644 "${src_dir}/man/pass-env.1" "${MAN_DIR}/man1/pass-env.1"
-    step "pass-env.1  →  ${MAN_DIR}/man1/pass-env.1"
+    added "${MAN_DIR}/man1/pass-env.1"
   fi
 
   # 3. Install shell completion.
   if [[ "$NO_COMPLETION" == false ]]; then
-    info "Installing shell completion..."
     local shells
     shells="$(detect_shells)"
 
@@ -500,7 +502,7 @@ main() {
       maybe_install 0644 \
         "${src_dir}/completion/pass-env.bash.completion" \
         "${BASH_COMP_DIR}/pass-env"
-      step "bash completion  →  ${BASH_COMP_DIR}/pass-env"
+      added "${BASH_COMP_DIR}/pass-env"
     fi
 
     if [[ "$shells" == *"zsh"* ]]; then
@@ -508,20 +510,18 @@ main() {
       maybe_install 0644 \
         "${src_dir}/completion/_pass-env" \
         "${ZSH_COMP_DIR}/_pass-env"
-      step "zsh completion  →  ${ZSH_COMP_DIR}/_pass-env"
+      added "${ZSH_COMP_DIR}/_pass-env"
     fi
   fi
 
   # 4. Install shell integration (pass-env-init.sh).
   if [[ "$NO_INIT" == false ]]; then
-    info "Installing shell integration..."
     maybe_mkdir "$INIT_SCRIPT_DIR"
     maybe_install 0644 \
       "${src_dir}/contrib/pass-env-init.sh" \
       "${INIT_SCRIPT_DIR}/pass-env-init.sh"
-    step "pass-env-init.sh  →  ${INIT_SCRIPT_DIR}/pass-env-init.sh"
+    added "${INIT_SCRIPT_DIR}/pass-env-init.sh"
 
-    info "Injecting source line into shell RC file(s)..."
     local shells
     shells="$(detect_shells)"
     local init_path="${INIT_SCRIPT_DIR}/pass-env-init.sh"
@@ -534,7 +534,6 @@ main() {
   info "pass-env ${VERSION} installed successfully!"
 
   if [[ "$NO_INIT" == false ]]; then
-    printf '\n'
     warn "Restart your shell (or source the relevant RC file) to activate shell integration."
   fi
 }
