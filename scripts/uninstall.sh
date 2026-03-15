@@ -45,10 +45,7 @@ error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 #
 # Arguments:
 #   $1 - Message text
-step()  { printf "  ${CYAN}→${NC} %s\n" "$1"; }
-
-# User-settable options; populated by parse_args().
-INSTALL_TYPE="user"
+step()  { printf "  ${CYAN}-${NC} %s\n" "$1"; }
 
 # Installation path variables; populated by resolve_paths().
 EXTENSION_DIR=""
@@ -72,21 +69,16 @@ USAGE:
 
 OPTIONS:
   -h, --help    Show this message
-  --user        Remove user-local install (default)
-  --system      Remove system-wide install
 
 EXAMPLES:
   bash uninstall.sh
-  bash uninstall.sh --system
 EOF
 }
 
-# Parse command-line arguments and set global option variables.
+# Parse command-line arguments.
 #
 # Arguments:
 #   $@ - Command-line arguments forwarded from main
-# Globals:
-#   INSTALL_TYPE - updated
 # Returns:
 #   0 on success
 #   exits 1 for unknown options
@@ -94,8 +86,6 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) show_help; exit 0 ;;
-      --user)    INSTALL_TYPE="user";   shift ;;
-      --system)  INSTALL_TYPE="system"; shift ;;
       *) error "Unknown option: $1. Run with --help for usage." ;;
     esac
   done
@@ -181,13 +171,13 @@ resolve_paths() {
 # Arguments:
 #   $1 - File path to remove
 # Outputs:
-#   stdout: status message via step()
+#   stdout: green [skipped] line when absent; red [removed] line when deleted
 # Returns:
 #   0 always
 maybe_rm() {
   local target="$1"
   if [[ ! -e "$target" ]]; then
-    step "not found, skipping: ${target}"
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$target"
     return 0
   fi
   if [[ -w "$(dirname "$target")" ]]; then
@@ -195,17 +185,18 @@ maybe_rm() {
   else
     sudo rm -f "$target"
   fi
-  step "removed: ${target}"
+  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$target"
 }
 
 # Remove a directory only when it exists and is empty.
 #
 # Uses sudo when the parent directory is not user-writable.
+# Silent when the directory is absent or non-empty.
 #
 # Arguments:
 #   $1 - Directory path to remove
 # Outputs:
-#   stdout: status message via step() if the directory is removed
+#   stdout: red [removed] line when the directory is deleted
 # Returns:
 #   0 always
 maybe_rmdir() {
@@ -217,7 +208,7 @@ maybe_rmdir() {
     else
       sudo rmdir "$dir"
     fi
-    step "removed empty directory: ${dir}"
+    printf "  ${RED}-${NC} %s  ${RED}[dir removed]${NC}\n" "$dir"
   fi
 }
 
@@ -256,7 +247,7 @@ RC_SENTINEL_END="# pass-env-init END"
 # Globals:
 #   RC_SENTINEL_BEGIN, RC_SENTINEL_END - read for sentinel strings
 # Outputs:
-#   stdout: status message via step()
+#   stdout: green [skipped] when absent; red [removed] when stripped
 # Returns:
 #   0 always
 strip_rc_block() {
@@ -264,15 +255,16 @@ strip_rc_block() {
   [[ -f "$rc_file" ]] || return 0
 
   if ! grep -qF "$RC_SENTINEL_BEGIN" "$rc_file"; then
-    step "$(basename "$rc_file"): pass-env-init block not found — skipping"
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
     return 0
   fi
 
   portable_sed_inplace "/^${RC_SENTINEL_BEGIN}/,/^${RC_SENTINEL_END}/d" "$rc_file"
-  step "Removed pass-env-init block from ${rc_file}"
+  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$rc_file"
 }
 
-# Main entry point. Resolves paths and removes all installed components.
+# Main entry point. Resolves paths for both user and system installs and
+# removes all installed components from each location.
 #
 # Arguments:
 #   $@ - Command-line arguments
@@ -284,38 +276,23 @@ main() {
 
   local os
   os="$(detect_os)"
-  resolve_paths "$os" "$INSTALL_TYPE"
 
-  printf '\n'
   info "Uninstalling pass-env"
-  printf '  %-24s %s\n' "Install type:" "$INSTALL_TYPE"
-  printf '  %-24s %s\n' "OS:"           "$os"
-  printf '\n'
 
-  # 1. Remove the pass extension.
-  info "Removing pass extension..."
-  maybe_rm "${EXTENSION_DIR}/env.bash"
-  maybe_rmdir "$EXTENSION_DIR"
+  for install_type in user system; do
+    resolve_paths "$os" "$install_type"
+    maybe_rm "${EXTENSION_DIR}/env.bash"
+    maybe_rmdir "$EXTENSION_DIR"
+    maybe_rm "${MAN_DIR}/man1/pass-env.1"
+    maybe_rm "${BASH_COMP_DIR}/pass-env"
+    maybe_rm "${ZSH_COMP_DIR}/_pass-env"
+    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-init.sh"
+    maybe_rmdir "$INIT_SCRIPT_DIR"
+  done
 
-  # 2. Remove the man page.
-  info "Removing man page..."
-  maybe_rm "${MAN_DIR}/man1/pass-env.1"
+  strip_rc_block "${HOME}/.bashrc"
+  strip_rc_block "${HOME}/.zshrc"
 
-  # 3. Remove shell completion.
-  info "Removing shell completion..."
-  maybe_rm "${BASH_COMP_DIR}/pass-env"
-  maybe_rm "${ZSH_COMP_DIR}/_pass-env"
-
-  # 4. Remove shell integration.
-  info "Removing pass-env-init.sh..."
-  maybe_rm "${INIT_SCRIPT_DIR}/pass-env-init.sh"
-  maybe_rmdir "$INIT_SCRIPT_DIR"
-
-  info "Stripping shell RC entries..."
-  [[ -f "${HOME}/.bashrc" ]] && strip_rc_block "${HOME}/.bashrc"
-  [[ -f "${HOME}/.zshrc"  ]] && strip_rc_block "${HOME}/.zshrc"
-
-  printf '\n'
   info "pass-env uninstalled."
   warn "Restart your shell to deactivate shell integration."
 }
