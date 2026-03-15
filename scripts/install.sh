@@ -2,10 +2,6 @@
 
 # pass-env installer
 #
-# Usage (release channel — curl to bash):
-#   curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/download/vX.Y.Z/install.sh | bash
-#   curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/download/vX.Y.Z/install.sh | bash -s -- --system
-#
 # Usage (local clone):
 #   bash scripts/install.sh [OPTIONS]
 
@@ -56,6 +52,10 @@ NO_COMPLETION=false
 NO_MAN=false
 NO_INIT=false
 TAG=""
+
+# Populated by detect_local_source(); non-empty means install from this path
+# instead of downloading a release tarball.
+LOCAL_SRC=""
 
 # Installation path variables; populated by resolve_paths().
 EXTENSION_DIR=""
@@ -138,6 +138,24 @@ detect_os() {
     Darwin*) printf 'darwin' ;;
     *)       error "Unsupported operating system: $(uname -s)" ;;
   esac
+}
+
+# Detect whether the script is being run from a local repository clone.
+#
+# If src/env.bash is found relative to this script's location, LOCAL_SRC is
+# set to the repository root so the installer can skip the download step.
+#
+# Globals:
+#   LOCAL_SRC - set to absolute repo root path, or left empty
+# Returns:
+#   0 always
+detect_local_source() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local candidate="${script_dir}/.."
+  if [[ -f "${candidate}/src/env.bash" ]]; then
+    LOCAL_SRC="$(cd "$candidate" && pwd)"
+  fi
 }
 
 # Return the Homebrew prefix, or an empty string when brew is not installed.
@@ -252,6 +270,15 @@ resolve_version() {
   if [[ -n "$TAG" ]]; then
     VERSION="${TAG#v}"
     VERSION="v${VERSION}"
+    return
+  fi
+
+  # When running from a local clone, read VERSION directly from src/env.bash.
+  if [[ -n "$LOCAL_SRC" ]]; then
+    local raw
+    raw="$(grep '^VERSION=' "${LOCAL_SRC}/src/env.bash" | sed -E 's/VERSION="(.*)"/\1/')"
+    [[ -z "$raw" ]] && error "Could not read VERSION from ${LOCAL_SRC}/src/env.bash"
+    VERSION="v${raw}"
     return
   fi
 
@@ -423,23 +450,30 @@ main() {
   local os
   os="$(detect_os)"
 
+  detect_local_source
   resolve_version
   resolve_paths "$os" "$INSTALL_TYPE"
   show_summary "$VERSION" "$os"
 
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT INT TERM
-
-  local tarball="${tmp_dir}/pass-env-${VERSION}.tar.gz"
-  download_tarball "$VERSION" "$tarball"
-
-  info "Extracting archive..."
-  tar -xzf "$tarball" -C "$tmp_dir"
-
   local src_dir
-  src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
-  [[ -d "$src_dir" ]] || error "Could not locate extracted source directory"
+
+  if [[ -n "$LOCAL_SRC" ]]; then
+    info "Installing from local source: ${LOCAL_SRC}"
+    src_dir="$LOCAL_SRC"
+  else
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+    local tarball="${tmp_dir}/pass-env-${VERSION}.tar.gz"
+    download_tarball "$VERSION" "$tarball"
+
+    info "Extracting archive..."
+    tar -xzf "$tarball" -C "$tmp_dir"
+
+    src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
+    [[ -d "$src_dir" ]] || error "Could not locate extracted source directory"
+  fi
 
   # 1. Install the pass extension.
   info "Installing pass extension..."
