@@ -60,7 +60,7 @@ check_pass_installed() {
 }
 
 # User-settable options; populated by parse_args().
-INSTALL_TYPE="user"    # user | system
+INSTALL_TYPE="system"  # user | system
 NO_COMPLETION=false
 NO_MAN=false
 NO_INIT=false
@@ -97,14 +97,14 @@ USAGE:
 OPTIONS:
   -h, --help          Show this message
   --tag TAG           Install a specific release tag (e.g. v1.2.3)
-  --user              User-local install, no sudo required (default)
-  --system            System-wide install, may require sudo
+  --user              User-local install, no sudo required
+  --system            System-wide install, may require sudo (default)
   --no-completion     Skip shell completion installation
   --no-man            Skip man page installation
   --no-init           Skip pass-env-init.sh shell integration
 
 EXAMPLES:
-  # Latest release, user install (default)
+  # Latest release, system install (default)
   bash install.sh
 
   # Pin to a specific version
