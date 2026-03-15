@@ -211,6 +211,7 @@ EXT_SENTINEL_END="# pass-env-extensions END"
 #   $1 - Path to the RC file (e.g. ~/.bashrc)
 #   $2 - Begin sentinel string (default: RC_SENTINEL_BEGIN)
 #   $3 - End sentinel string (default: RC_SENTINEL_END)
+#   $4 - Optional human-readable label appended to the output line
 # Outputs:
 #   stdout: green [file not found] when RC file absent
 #           green [not installed] when file present but sentinel absent
@@ -221,19 +222,22 @@ strip_rc_block() {
   local rc_file="$1"
   local sentinel_begin="${2:-$RC_SENTINEL_BEGIN}"
   local sentinel_end="${3:-$RC_SENTINEL_END}"
+  local label="${4:-}"
+  local display
+  display="$rc_file${label:+ (${label})}"
 
   if [[ ! -f "$rc_file" ]]; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[file not found]${NC}\n" "$rc_file"
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[file not found]${NC}\n" "$display"
     return 0
   fi
 
   if ! grep -qF "$sentinel_begin" "$rc_file"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[not installed]${NC}\n" "$rc_file"
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[not installed]${NC}\n" "$display"
     return 0
   fi
 
   portable_sed_inplace "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file"
-  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$rc_file"
+  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$display"
 }
 
 # Main entry point. Resolves paths for both user and system installs and
@@ -261,10 +265,10 @@ main() {
     maybe_rmdir "$INIT_SCRIPT_DIR"
   done
 
-  strip_rc_block "${HOME}/.bashrc"
-  strip_rc_block "${HOME}/.zshrc"
-  strip_rc_block "${HOME}/.bashrc" "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END"
-  strip_rc_block "${HOME}/.zshrc"  "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END"
+  strip_rc_block "${HOME}/.bashrc" "$RC_SENTINEL_BEGIN"  "$RC_SENTINEL_END"  "init block"
+  strip_rc_block "${HOME}/.zshrc"  "$RC_SENTINEL_BEGIN"  "$RC_SENTINEL_END"  "init block"
+  strip_rc_block "${HOME}/.bashrc" "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END" "extensions block"
+  strip_rc_block "${HOME}/.zshrc"  "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END" "extensions block"
 
   info "pass-env uninstalled."
   warn "Restart your shell to deactivate shell integration."
