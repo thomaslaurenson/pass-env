@@ -660,7 +660,7 @@ main() {
   else
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+    trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"' EXIT INT TERM
 
     local tarball="${tmp_dir}/pass-env-${VERSION}.tar.gz"
     download_tarball "$VERSION" "$tarball"
