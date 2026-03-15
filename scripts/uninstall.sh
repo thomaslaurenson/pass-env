@@ -236,30 +236,35 @@ portable_sed_inplace() {
 RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
 RC_SENTINEL_END="# pass-env-init END"
 
-# Remove the pass-env-init source block from a shell RC file.
+# Sentinel strings used to locate the injected extensions export block.
+EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
+EXT_SENTINEL_END="# pass-env-extensions END"
+
+# Remove a guarded block from a shell RC file.
 #
 # Deletes every line from the BEGIN sentinel through the END sentinel,
-# inclusive. The blank line that precedes the block is left behind as a
-# harmless empty line. Skips silently when the sentinel is absent.
+# inclusive. Skips silently when the sentinel is absent.
 #
 # Arguments:
 #   $1 - Path to the RC file (e.g. ~/.bashrc)
-# Globals:
-#   RC_SENTINEL_BEGIN, RC_SENTINEL_END - read for sentinel strings
+#   $2 - Begin sentinel string (default: RC_SENTINEL_BEGIN)
+#   $3 - End sentinel string (default: RC_SENTINEL_END)
 # Outputs:
 #   stdout: green [skipped] when absent; red [removed] when stripped
 # Returns:
 #   0 always
 strip_rc_block() {
   local rc_file="$1"
+  local sentinel_begin="${2:-$RC_SENTINEL_BEGIN}"
+  local sentinel_end="${3:-$RC_SENTINEL_END}"
   [[ -f "$rc_file" ]] || return 0
 
-  if ! grep -qF "$RC_SENTINEL_BEGIN" "$rc_file"; then
+  if ! grep -qF "$sentinel_begin" "$rc_file"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
     return 0
   fi
 
-  portable_sed_inplace "/^${RC_SENTINEL_BEGIN}/,/^${RC_SENTINEL_END}/d" "$rc_file"
+  portable_sed_inplace "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file"
   printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$rc_file"
 }
 
@@ -292,6 +297,8 @@ main() {
 
   strip_rc_block "${HOME}/.bashrc"
   strip_rc_block "${HOME}/.zshrc"
+  strip_rc_block "${HOME}/.bashrc" "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END"
+  strip_rc_block "${HOME}/.zshrc"  "$EXT_SENTINEL_BEGIN" "$EXT_SENTINEL_END"
 
   info "pass-env uninstalled."
   warn "Restart your shell to deactivate shell integration."

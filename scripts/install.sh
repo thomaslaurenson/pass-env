@@ -52,6 +52,16 @@ step()  { printf "  ${CYAN} - ${NC} %s\n" "$1"; }
 #   $1 - Destination file path
 added() { printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$1"; }
 
+# Exit with an error if pass is not installed.
+#
+# Returns:
+#   0 if pass is found
+#   exits 1 if pass is not found
+check_pass_installed() {
+  command -v pass &>/dev/null || \
+    error "pass is not installed or not in PATH. Install pass before running this script."
+}
+
 # User-settable options; populated by parse_args().
 INSTALL_TYPE="user"    # user | system
 NO_COMPLETION=false
@@ -62,6 +72,10 @@ TAG=""
 # Populated by detect_local_source(); non-empty means install from this path
 # instead of downloading a release tarball.
 LOCAL_SRC=""
+
+# Set to true by detect_needs_enable_extensions() when PASSWORD_STORE_ENABLE_EXTENSIONS
+# must be exported for the installed extension to be visible to pass.
+NEEDS_ENABLE_EXTENSIONS=false
 
 # Installation path variables; populated by resolve_paths().
 EXTENSION_DIR=""
@@ -161,6 +175,28 @@ detect_local_source() {
   local candidate="${script_dir}/.."
   if [[ -f "${candidate}/src/env.bash" ]]; then
     LOCAL_SRC="$(cd "$candidate" && pwd)"
+  fi
+}
+
+# Determine whether PASSWORD_STORE_ENABLE_EXTENSIONS=true must be set.
+#
+# Reads the SYSTEM_EXTENSION_DIR value compiled into the pass binary. If
+# EXTENSION_DIR matches that path, pass loads the extension unconditionally
+# and the env var is not required. In all other cases (user dir, Homebrew
+# prefix, custom dir) it is required.
+#
+# Globals:
+#   EXTENSION_DIR           - read; compared against the compiled-in system dir
+#   NEEDS_ENABLE_EXTENSIONS - set to true when the env var is required
+# Returns:
+#   0 always
+detect_needs_enable_extensions() {
+  local pass_bin sys_ext_dir
+  pass_bin="$(command -v pass 2>/dev/null)" || return 0
+  sys_ext_dir="$(grep -m1 '^SYSTEM_EXTENSION_DIR=' "$pass_bin" \
+    | sed -E 's/SYSTEM_EXTENSION_DIR="?([^"]*).*/\1/')" || true
+  if [[ -z "$sys_ext_dir" || "$EXTENSION_DIR" != "$sys_ext_dir" ]]; then
+    NEEDS_ENABLE_EXTENSIONS=true
   fi
 }
 
@@ -379,6 +415,10 @@ detect_shells() {
 RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
 RC_SENTINEL_END="# pass-env-init END"
 
+# Sentinel strings used to bracket the injected PASSWORD_STORE_ENABLE_EXTENSIONS block.
+EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
+EXT_SENTINEL_END="# pass-env-extensions END"
+
 # Append a guarded source block for pass-env-init.sh to a shell RC file.
 #
 # The block is wrapped in BEGIN/END sentinel comments so the uninstaller can
@@ -411,6 +451,40 @@ ${RC_SENTINEL_BEGIN}
 # Added by pass-env installer. Remove this block, or run uninstall.sh, to undo.
 [[ -f "${init_script_path}" ]] && source "${init_script_path}"
 ${RC_SENTINEL_END}
+EOF
+  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$rc_file"
+}
+
+# Append a guarded export block for PASSWORD_STORE_ENABLE_EXTENSIONS to a
+# shell RC file.
+#
+# Uses its own sentinel pair so it can be managed independently of the
+# pass-env-init block. Idempotent: skips if the sentinel is already present.
+#
+# Arguments:
+#   $1 - Path to the RC file (e.g. ~/.bashrc)
+# Globals:
+#   EXT_SENTINEL_BEGIN, EXT_SENTINEL_END - read for sentinel strings
+# Outputs:
+#   stdout: green [added] or [skipped] line
+# Returns:
+#   0 always
+inject_extensions_rc() {
+  local rc_file="$1"
+
+  [[ -f "$rc_file" ]] || touch "$rc_file"
+
+  if grep -qF "$EXT_SENTINEL_BEGIN" "$rc_file"; then
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
+    return 0
+  fi
+
+  cat >> "$rc_file" <<EOF
+
+${EXT_SENTINEL_BEGIN}
+# Added by pass-env installer. Required for pass to load user-dir extensions.
+export PASSWORD_STORE_ENABLE_EXTENSIONS=true
+${EXT_SENTINEL_END}
 EOF
   printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$rc_file"
 }
@@ -451,19 +525,21 @@ show_summary() {
 main() {
   parse_args "$@"
 
+  check_pass_installed
+
   local os
   os="$(detect_os)"
 
   detect_local_source
   resolve_version
   resolve_paths "$os" "$INSTALL_TYPE"
+  detect_needs_enable_extensions
   show_summary "$VERSION" "$os"
 
   local src_dir
 
   if [[ -n "$LOCAL_SRC" ]]; then
     info "Installing from local source: ${LOCAL_SRC}"
-    printf '\n'
     src_dir="$LOCAL_SRC"
   else
     local tmp_dir
@@ -530,7 +606,20 @@ main() {
     [[ "$shells" == *"zsh"* ]]  && inject_rc "${HOME}/.zshrc"  "$init_path"
   fi
 
-  printf '\n'
+  # 5. Inject PASSWORD_STORE_ENABLE_EXTENSIONS into RC file(s) if required.
+  if [[ "$NEEDS_ENABLE_EXTENSIONS" == true ]]; then
+    if [[ "$NO_INIT" == false ]]; then
+      local ext_shells
+      ext_shells="$(detect_shells)"
+      [[ "$ext_shells" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
+      [[ "$ext_shells" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
+    else
+      warn "PASSWORD_STORE_ENABLE_EXTENSIONS=true is required for pass to load"
+      warn "this extension. Add the following line to your shell RC file:"
+      warn "  export PASSWORD_STORE_ENABLE_EXTENSIONS=true"
+    fi
+  fi
+
   info "pass-env ${VERSION} installed successfully!"
 
   if [[ "$NO_INIT" == false ]]; then
