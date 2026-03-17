@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-03-15
+
+### Fixed
+
+- `tmp_dir` error on install script
+
 ## 0.1.1 - 2026-03-15
 
 ### Added
