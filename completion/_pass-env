@@ -74,7 +74,7 @@ _pass_env() {
       case $words[1] in
         run)
           # Detect whether -- has already been supplied.
-          # Everything after -- is the command to run — do not complete it.
+          # Everything after -- is the command to run — delegate completion to it.
           local ddash_idx=0 i
           for (( i = 2; i <= $#words; i++ )); do
             if [[ "${words[$i]}" == '--' ]]; then
@@ -84,8 +84,10 @@ _pass_env() {
           done
 
           if (( ddash_idx > 0 && CURRENT > ddash_idx )); then
-            # After --: leave completion to the shell
-            return 0
+            # After --: delegate to _command_offset so the command and its
+            # arguments (files, flags, etc.) complete normally.
+            _command_offset $(( ddash_idx + 1 ))
+            return
           fi
 
           _arguments \
@@ -113,3 +115,95 @@ _pass_env() {
 }
 
 _pass_env "$@"
+
+# Zsh completion function for the passenv shell function.
+#
+# Registered via `compdef _passenv passenv` below so it works independently
+# of pass's own completion state. For the `unset` subcommand, completes from
+# currently loaded entries in _PASSENV_TRACKER when available, falling back
+# to all store entries when the tracker is empty.
+#
+# Globals:
+#   _PASSENV_TRACKER - read for loaded entry names (unset subcommand)
+#   PASSWORD_STORE_DIR - read indirectly by _pass_env_entries
+# Returns:
+#   0 always
+_passenv() {
+  local state
+
+  local -a subcommands
+  subcommands=(
+    'set:load vars into the current shell (handles eval automatically)'
+    'unset:remove vars from the current shell (handles eval automatically)'
+    'run:load vars for a single command (vars do not persist)'
+    'list:print all .env entries available in the password store'
+    'loaded:print all entries currently loaded via passenv'
+    'version:print the installed pass-env version'
+    'help:show usage information'
+  )
+
+  _arguments -C \
+    '1: :->subcmd' \
+    '*:: :->args'
+
+  case $state in
+    subcmd)
+      _describe 'subcommand' subcommands
+      ;;
+
+    args)
+      case $words[1] in
+        set)
+          _arguments \
+            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '1:entry:_pass_env_entries'
+          ;;
+
+        unset)
+          # Prefer loaded entries from the tracker; fall back to the full store.
+          if (( ${#_PASSENV_TRACKER} > 0 )); then
+            local -a loaded_keys
+            loaded_keys=( "${(@k)_PASSENV_TRACKER}" )
+            compadd -a loaded_keys
+          else
+            _pass_env_entries
+          fi
+          ;;
+
+        run)
+          # Detect whether -- has already been supplied.
+          # Everything after -- is the command to run — delegate completion to it.
+          local ddash_idx=0 i
+          for (( i = 2; i <= $#words; i++ )); do
+            if [[ "${words[$i]}" == '--' ]]; then
+              ddash_idx=$i
+              break
+            fi
+          done
+
+          if (( ddash_idx > 0 && CURRENT > ddash_idx )); then
+            # After --: delegate to _command_offset so the command and its
+            # arguments (files, flags, etc.) complete normally.
+            _command_offset $(( ddash_idx + 1 ))
+            return
+          fi
+
+          _arguments \
+            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '--[end of passenv flags; COMMAND follows]' \
+            '1:entry:_pass_env_entries'
+          ;;
+
+        list|loaded|version|help)
+          # No further arguments.
+          ;;
+
+        *)
+          _describe 'subcommand' subcommands
+          ;;
+      esac
+      ;;
+  esac
+}
+
+compdef _passenv passenv

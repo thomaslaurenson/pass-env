@@ -97,7 +97,8 @@ __pass_env() {
 
     run)
       # pass env run [--entry PATH] -- COMMAND ...
-      # Before `--`, complete flags/entries; after `--`, stop completing (let the called prog decide)
+      # Before `--`, complete flags/entries; after `--`, delegate to the
+      # command that follows so its own completions (files, flags, etc.) work.
       # Detect if `--` is already present before current cursor
       local seen_ddash=0
       for (( j=env_idx+2; j<cword; j++ )); do
@@ -105,8 +106,13 @@ __pass_env() {
       done
 
       if (( seen_ddash )); then
-        # After `--`, do not complete (return no suggestions)
-        COMPREPLY=()
+        # After `--`, delegate to _command_offset so the command and its
+        # arguments (files, flags, etc.) complete normally.
+        local ddash_pos
+        for (( j=env_idx+2; j<${#words[@]}; j++ )); do
+          if [[ "${words[$j]}" == "--" ]]; then ddash_pos=$j; break; fi
+        done
+        _command_offset $(( ddash_pos + 1 ))
         return 0
       fi
 
@@ -212,7 +218,13 @@ __passenv() {
         if [[ "${words[$j]}" == "--" ]]; then seen_ddash=1; break; fi
       done
       if (( seen_ddash )); then
-        COMPREPLY=()
+        # After `--`, delegate to _command_offset so the command and its
+        # arguments (files, flags, etc.) complete normally.
+        local ddash_pos
+        for (( j=2; j<${#words[@]}; j++ )); do
+          if [[ "${words[$j]}" == "--" ]]; then ddash_pos=$j; break; fi
+        done
+        _command_offset $(( ddash_pos + 1 ))
         return 0
       fi
       if [[ "$prev" == "--entry" ]]; then
