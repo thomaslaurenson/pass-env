@@ -22,8 +22,8 @@ lint:
 	@shellcheck -s bash scripts/install.sh \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
-	@printf 'shellcheck  scripts/uninstall.sh ... '
-	@shellcheck -s bash scripts/uninstall.sh \
+	@printf 'shellcheck  contrib/pass-env-uninstall.sh ... '
+	@shellcheck -s bash contrib/pass-env-uninstall.sh \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash -n     src/env.bash ... '
@@ -34,8 +34,8 @@ lint:
 	@bash -n scripts/install.sh \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
-	@printf 'bash -n     scripts/uninstall.sh ... '
-	@bash -n scripts/uninstall.sh \
+	@printf 'bash -n     contrib/pass-env-uninstall.sh ... '
+	@bash -n contrib/pass-env-uninstall.sh \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
 	@printf 'bash source contrib/pass-env-init.sh ... '
