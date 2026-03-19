@@ -1,5 +1,13 @@
-# bash completion for `pass env` extension
-# Place somewhere sourced by your shell, e.g. /etc/bash_completion.d/ or ~/.bash_completion.d/
+# bash completion for the `pass env` extension and `passenv` shell function.
+#
+# The file covers two independent surfaces:
+#   1. `pass env` — hooked via the PASSWORD_STORE_EXTENSION_COMMANDS mechanism
+#      (requires pass's own bash completion to be loaded first).
+#   2. `passenv` — registered directly with `complete -F __passenv passenv`
+#      and works regardless of pass's completion state.
+#
+# Installation: place (or symlink) this file somewhere sourced by bash-completion,
+# e.g. /etc/bash_completion.d/ or ~/.local/share/bash-completion/completions/
 # Requires: bash-completion, pass available in PATH.
 
 # Print all pass entry paths from the store to stdout, one per line.
@@ -16,7 +24,7 @@
 __pass_env_list_entries() {
   local dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
   if [[ -d "$dir" ]]; then
-    (cd "$dir" && find . -type f -name '*.gpg' -printf '%P\n') \
+    (cd "$dir" && find . -type f -name '*.env.gpg' -printf '%P\n') \
       | sed -E 's#\.gpg$##; s#^\./##'
   fi
 }
@@ -36,6 +44,11 @@ __pass_env_complete_entries() {
   local cur="$1"
   local IFS=$'\n'
   local all=( $(__pass_env_list_entries) )
+  # Disable filename path-stripping: pass is registered with `complete -o filenames`
+  # which causes bash to strip directory components from COMPREPLY entries.
+  # compopt +o filenames overrides that for this completion so full paths like
+  # github/pat.env are preserved as-is.
+  compopt +o filenames 2>/dev/null
   COMPREPLY+=( $(compgen -W "${all[*]}" -- "$cur") )
 }
 
@@ -71,14 +84,14 @@ __pass_env() {
   # If cursor is at the subcommand position (or subcmd is an option/dash), complete subcommands
   local subcmd_pos=$((env_idx+1))
   if (( cword == subcmd_pos )) || [[ "$subcmd" == -* ]]; then
-    local subs="run set unset help"
+    local subs="run set unset list version help"
     COMPREPLY=( $(compgen -W "$subs" -- "$cur") )
     return 0
   fi
 
   # After we have a subcommand, route to per-subcommand completion
   case "$subcmd" in
-    help)
+    help|list|version)
       COMPREPLY=() # nothing more to complete
       ;;
 
@@ -129,7 +142,7 @@ __pass_env() {
 
     *)
       # Unknown subcommand -> show subcmds
-      COMPREPLY=( $(compgen -W "run set unset help" -- "$cur") )
+      COMPREPLY=( $(compgen -W "run set unset list version help" -- "$cur") )
       ;;
   esac
 }
@@ -137,5 +150,87 @@ __pass_env() {
 # Hook into pass's built-in extension completion mechanism.
 # pass's _pass() function looks for __password_store_extension_complete_<CMD>
 # and calls it when COMP_WORDS[1] matches a name in PASSWORD_STORE_EXTENSION_COMMANDS.
+# NOTE: This only fires if pass's own bash completion is sourced before this file.
 PASSWORD_STORE_EXTENSION_COMMANDS+=(env)
 __password_store_extension_complete_env() { __pass_env; }
+
+# Bash completion function for the passenv shell function.
+#
+# Registered directly with `complete -F` so it works independently of pass's
+# own completion state. For the `unset` subcommand, completes from currently
+# loaded entries in _PASSENV_TRACKER when available, falling back to all
+# store entries when the tracker is empty.
+#
+# Globals:
+#   COMPREPLY          - set with completion candidates
+#   _PASSENV_TRACKER   - read for loaded entry names (unset subcommand)
+#   PASSWORD_STORE_DIR - read indirectly by __pass_env_list_entries
+# Returns:
+#   0 always
+__passenv() {
+  local cur prev words cword
+  _init_completion -n : || return
+
+  # words[0]=passenv  words[1]=subcommand  words[2+]=args
+  local subcmd=""
+  if (( ${#words[@]} >= 2 )); then
+    subcmd="${words[1]}"
+  fi
+
+  # Complete the subcommand token itself.
+  if (( cword == 1 )); then
+    COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+    return 0
+  fi
+
+  case "$subcmd" in
+    set)
+      if [[ "$prev" == "--entry" ]]; then
+        __pass_env_complete_entries "$cur"
+        return 0
+      fi
+      __pass_env_complete_entries "$cur"
+      ;;
+
+    unset)
+      # Prefer loaded entries from the tracker; fall back to the full store.
+      if [[ ${#_PASSENV_TRACKER[@]} -gt 0 ]]; then
+        local loaded_keys=()
+        local k
+        for k in "${!_PASSENV_TRACKER[@]}"; do
+          loaded_keys+=("$k")
+        done
+        COMPREPLY=( $(compgen -W "${loaded_keys[*]}" -- "$cur") )
+      else
+        __pass_env_complete_entries "$cur"
+      fi
+      ;;
+
+    run)
+      local seen_ddash=0 j
+      for (( j=2; j<cword; j++ )); do
+        if [[ "${words[$j]}" == "--" ]]; then seen_ddash=1; break; fi
+      done
+      if (( seen_ddash )); then
+        COMPREPLY=()
+        return 0
+      fi
+      if [[ "$prev" == "--entry" ]]; then
+        __pass_env_complete_entries "$cur"
+        return 0
+      fi
+      COMPREPLY+=( $(compgen -W "-- --entry" -- "$cur") )
+      __pass_env_complete_entries "$cur"
+      ;;
+
+    list|loaded|version|help)
+      COMPREPLY=()
+      ;;
+
+    *)
+      COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+      ;;
+  esac
+}
+
+complete -F __passenv passenv
