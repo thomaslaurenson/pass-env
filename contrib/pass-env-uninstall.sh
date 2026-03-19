@@ -5,8 +5,11 @@
 # Removes all files laid down by install.sh and strips the pass-env
 # source block from ~/.bashrc / ~/.zshrc.
 #
+# Installed by install.sh to INIT_SCRIPT_DIR (e.g. ~/.local/share/pass-env/
+# for user installs or /usr/local/share/pass-env/ for system installs).
+#
 # Usage:
-#   bash scripts/uninstall.sh
+#   bash /path/to/pass-env-uninstall.sh
 
 set -euo pipefail
 
@@ -262,6 +265,7 @@ main() {
     maybe_rm "${BASH_COMP_DIR}/pass-env"
     maybe_rm "${ZSH_COMP_DIR}/_pass-env"
     maybe_rm "${INIT_SCRIPT_DIR}/pass-env-init.sh"
+    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
     maybe_rmdir "$INIT_SCRIPT_DIR"
   done
 

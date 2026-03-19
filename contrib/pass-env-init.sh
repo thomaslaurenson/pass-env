@@ -305,7 +305,8 @@ _passenv_list() {
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
 # Outputs:
-#   stdout: formatted table, or a 'no entries' message if the tracker is empty
+#   stdout: one 'passenv: ENTRY → VARS' line per loaded entry, or a
+#           'no entries' message if the tracker is empty
 # Returns:
 #   0 always
 _passenv_loaded() {
@@ -314,10 +315,8 @@ _passenv_loaded() {
     return 0
   fi
 
-  printf '%-40s %s\n' 'ENTRY' 'VARIABLES'
-  printf '%-40s %s\n' '----------------------------------------' '---------'
   _passenv_keys | while IFS= read -r k; do
-    printf '%-40s %s\n' "$k" "${_PASSENV_TRACKER[$k]}"
+    printf 'passenv: %s → %s\n' "$k" "${_PASSENV_TRACKER[$k]}"
   done
 }
 

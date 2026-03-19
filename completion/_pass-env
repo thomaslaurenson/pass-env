@@ -25,7 +25,7 @@ _pass_env_entries() {
   [[ -d "$password_store_dir" ]] || return 0
   local -a entries
   entries=( "${(@f)$(
-    find "$password_store_dir" -name '*.gpg' -printf '%P\n' 2>/dev/null \
+    find "$password_store_dir" -name '*.env.gpg' -printf '%P\n' 2>/dev/null \
       | sed 's/\.gpg$//' \
       | sort
   )}" )
@@ -56,6 +56,8 @@ _pass_env() {
     'run:load vars for a single command (vars do not persist)'
     'set:print export statements; eval to load vars into the current shell'
     'unset:print unset statements; eval to remove vars from the current shell'
+    'list:print all .env entries available in the password store'
+    'version:print the installed pass-env version'
     'help:show usage information'
   )
 

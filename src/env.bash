@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.3"
 
 PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
 

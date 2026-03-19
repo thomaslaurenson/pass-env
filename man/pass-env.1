@@ -1,4 +1,4 @@
-.TH pass-env 1 "2026 March 14" "Version 2.0.0" "User Commands"
+.TH pass-env 1 "2026 March 15" "Version 0.1.2" "User Commands"
 
 .SH NAME
 pass-env \- a password-store extension to manage environment variables from encrypted .env entries
@@ -106,6 +106,10 @@ eval "$(pass env unset os/prod.env)"
 .RE
 
 .TP
+.BR "pass env version"
+Print the installed version of pass-env.
+
+.TP
 .BR "pass env help"
 Print usage information for the extension.
 
@@ -180,6 +184,10 @@ passenv run os/prod.env \-\- printenv MY_VAR
 passenv run api/openai.env db/prod.env \-\- myapp
 .EE
 .RE
+
+.TP
+.B passenv version
+Print the installed version of pass-env.
 
 .TP
 .B passenv list
