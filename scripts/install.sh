@@ -64,6 +64,7 @@ INSTALL_TYPE="system"  # user | system
 NO_COMPLETION=false
 NO_MAN=false
 NO_INIT=false
+NO_UNINSTALL=false
 TAG=""
 
 # Populated by detect_local_source(); non-empty means install from this path
@@ -102,6 +103,7 @@ OPTIONS:
   --no-completion     Skip shell completion installation
   --no-man            Skip man page installation
   --no-init           Skip pass-env-init.sh shell integration
+  --no-uninstall      Skip uninstall script installation
 
 EXAMPLES:
   # Latest release, system install (default)
@@ -138,6 +140,7 @@ parse_args() {
       --no-completion) NO_COMPLETION=true;    shift ;;
       --no-man)        NO_MAN=true;           shift ;;
       --no-init)       NO_INIT=true;          shift ;;
+      --no-uninstall)  NO_UNINSTALL=true;     shift ;;
       *) error "Unknown option: $1. Run with --help for usage." ;;
     esac
   done
@@ -473,6 +476,7 @@ validate_src_dir() {
     "completion/pass-env.bash.completion"
     "completion/_pass-env"
     "contrib/pass-env-init.sh"
+    "contrib/pass-env-uninstall.sh"
   )
   for rel in "${required[@]}"; do
     [[ -f "${dir}/${rel}" ]] \
@@ -622,10 +626,11 @@ show_summary() {
   info "$(printf '%-24s %s' "Install type:"      "$INSTALL_TYPE")"
   info "$(printf '%-24s %s' "OS:"                "$os")"
   info "$(printf '%-24s %s' "Extension dir:"     "$EXTENSION_DIR")"
-  [[ "$NO_MAN" == false ]]        && info "$(printf '%-24s %s' "Man dir:"         "${MAN_DIR}/man1")"
-  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Bash completion:" "$BASH_COMP_DIR")"
-  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Zsh completion:"  "$ZSH_COMP_DIR")"
-  [[ "$NO_INIT" == false ]]       && info "$(printf '%-24s %s' "Init script dir:" "$INIT_SCRIPT_DIR")"
+  [[ "$NO_MAN" == false ]]        && info "$(printf '%-24s %s' "Man dir:"           "${MAN_DIR}/man1")"
+  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Bash completion:"   "$BASH_COMP_DIR")"
+  [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Zsh completion:"    "$ZSH_COMP_DIR")"
+  [[ "$NO_INIT" == false ]]       && info "$(printf '%-24s %s' "Init script dir:"   "$INIT_SCRIPT_DIR")"
+  [[ "$NO_UNINSTALL" == false ]]  && info "$(printf '%-24s %s' "Uninstall script:"  "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh")"
 }
 
 # Main entry point. Parses arguments, resolves version and paths, downloads
@@ -713,9 +718,13 @@ main() {
     fi
   fi
 
-  # 4. Install shell integration (pass-env-init.sh).
-  if [[ "$NO_INIT" == false ]]; then
+  # 4. Install shell integration (pass-env-init.sh) and uninstall script.
+  # Create INIT_SCRIPT_DIR when either component will be installed.
+  if [[ "$NO_INIT" == false || "$NO_UNINSTALL" == false ]]; then
     maybe_mkdir "$INIT_SCRIPT_DIR"
+  fi
+
+  if [[ "$NO_INIT" == false ]]; then
     maybe_install 0644 \
       "${src_dir}/contrib/pass-env-init.sh" \
       "${INIT_SCRIPT_DIR}/pass-env-init.sh"
@@ -727,7 +736,15 @@ main() {
     [[ "$shells" == *"zsh"* ]]  && inject_rc "${HOME}/.zshrc"  "$init_path"
   fi
 
-  # 5. Inject PASSWORD_STORE_ENABLE_EXTENSIONS into RC file(s) if required.
+  # 5. Install the uninstall script.
+  if [[ "$NO_UNINSTALL" == false ]]; then
+    maybe_install 0755 \
+      "${src_dir}/contrib/pass-env-uninstall.sh" \
+      "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
+    added "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
+  fi
+
+  # 6. Inject PASSWORD_STORE_ENABLE_EXTENSIONS into RC file(s) if required.
   if [[ "$NEEDS_ENABLE_EXTENSIONS" == true ]]; then
     if [[ "$NO_INIT" == false ]]; then
       [[ "$shells" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
@@ -740,6 +757,10 @@ main() {
   fi
 
   info "pass-env ${VERSION} installed successfully!"
+
+  if [[ "$NO_UNINSTALL" == false ]]; then
+    info "To uninstall, run: bash ${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
+  fi
 
   if [[ "$NO_INIT" == false ]]; then
     warn "Restart your shell (or source the relevant RC file) to activate shell integration."
