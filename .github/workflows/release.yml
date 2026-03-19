@@ -32,6 +32,15 @@ jobs:
           cp scripts/install.sh install.sh
           sed -i 's/^VERSION=.*/VERSION="${{ github.ref_name }}"/' install.sh
 
+      - name: Extract release notes
+        run: |
+          ver="${{ github.ref_name }}"
+          ver="${ver#v}"
+          awk -v ver="$ver" '
+            /^## / { if (found) exit; if (index($0, "## " ver)) { found=1 }; next }
+            found  { print }
+          ' CHANGELOG.md | sed -e '/[^[:space:]]/,$!d' > release_notes.md
+
       - name: Generate checksums
         run: |
           sha256sum "${{ env.ARCHIVE }}" install.sh > checksums.txt
@@ -39,6 +48,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release_notes.md
           files: |
             ${{ env.ARCHIVE }}
             install.sh
