@@ -277,8 +277,7 @@ _passenv_unset() {
     done < <(_passenv_split_words "$varlist")
 
     # Remove the entry from the tracker.
-    # eval expands $entry before unset sees the array subscript.
-    eval "unset '_PASSENV_TRACKER[$entry]'"
+    unset "_PASSENV_TRACKER[$entry]"
 
     printf 'passenv: unset %s → %s\n' "$entry" "$varlist"
   done
