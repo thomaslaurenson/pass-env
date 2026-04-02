@@ -163,3 +163,21 @@ setup() {
   run bash "$ENV_BASH" run myentry.env -- bash -c 'exit 42'
   [ "$status" -eq 42 ]
 }
+
+# CRLF handling
+
+@test "set: strips trailing CR from values in CRLF-encoded entries" {
+  eval "$(bash "$ENV_BASH" set crlf.env)"
+  # Value must equal the clean string with no embedded carriage return
+  [[ "$CRLF_VAR" == "testvalue" ]]
+  [[ "${#CRLF_VAR}" -eq 9 ]]
+}
+
+# Error message safety
+
+@test "set: error for unsupported line format does not include the secret value" {
+  run bash "$ENV_BASH" set badformat.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "unsupported line format" ]]
+  ! [[ "$output" =~ "supersecret123" ]]
+}
