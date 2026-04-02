@@ -180,6 +180,7 @@ _parse_entry() {
   local entry="$1" content key val
   content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
   while IFS= read -r line; do
+    line="${line%$'\r'}"   # strip trailing CR — handles CRLF files transparently
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
     if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
@@ -187,7 +188,7 @@ _parse_entry() {
       [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
       printf '%s=%q\n' "$key" "$val"
     else
-      die "unsupported line format in $entry: $line"
+      die "unsupported line format in $entry (expected KEY=VALUE)"
     fi
   done <<< "$content"
 }
