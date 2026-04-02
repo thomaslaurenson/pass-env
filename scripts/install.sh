@@ -117,6 +117,16 @@ EXAMPLES:
 
   # Minimal install: extension only
   bash install.sh --no-completion --no-man --no-init
+
+SECURITY:
+  When this script is piped directly from curl, it runs without giving you a
+  chance to verify its contents first. For security-conscious installs:
+
+    curl -fsSL .../install.sh -o /tmp/pass-env-install.sh
+    curl -fsSL .../checksums.txt -o /tmp/pass-env-checksums.txt
+    sha256sum --check --ignore-missing /tmp/pass-env-checksums.txt
+    less /tmp/pass-env-install.sh
+    bash /tmp/pass-env-install.sh
 EOF
 }
 

@@ -11,7 +11,7 @@ A [pass](https://www.passwordstore.org/) extension that decrypts `.env` files fr
 ```sh
 # Debian-based
 sudo apt install -y pass fzf
-#Red Hat-based
+# Red Hat-based
 sudo dnf install -y pass fzf
 # macOS
 brew install pass fzf
@@ -19,19 +19,35 @@ brew install pass fzf
 
 ## Installation
 
-Installs system-wide by default (may prompt for `sudo`):
+### Verified Install (Recommended)
+
+Download the installer and its published checksum, verify the hash, inspect the script, then run it:
+
+```sh
+BASE_URL="https://github.com/thomaslaurenson/pass-env/releases/latest/download"
+curl -fsSL "$BASE_URL/install.sh" -o /tmp/pass-env-install.sh
+curl -fsSL "$BASE_URL/checksums.txt" -o /tmp/pass-env-checksums.txt
+
+sha256sum --check --ignore-missing /tmp/pass-env-checksums.txt
+
+less /tmp/pass-env-install.sh
+
+bash /tmp/pass-env-install.sh
+```
+
+### Quick Install
 
 ```sh
 curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash
 ```
 
-For a user-local install with no sudo:
+For a user-local install with no `sudo`, pass the `--user` argument:
 
 ```sh
 curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash -s -- --user
 ```
 
-Then restart your shell (or source your RC file).
+> **Note:** When piped directly to bash, the installer runs without giving you a chance to verify its contents. Use the recommended path in the section above if you require pre-execution integrity checking.
 
 There are a selection of other install options, including:
 
@@ -40,7 +56,7 @@ There are a selection of other install options, including:
 - `--no-init`: Do not install shell initialization helps
 - `--no-uninstall`: Do not install pass env uninstaller
 
-## Two Ways to Use pass-env
+## Two Ways to Use `pass-env`
 
 `pass env` is the raw pass extension. It emits `export KEY=VALUE` lines to stdout — but because a subprocess cannot modify its parent's environment, those lines must be `eval`'d by the caller to have any effect in the current shell.
 
@@ -99,7 +115,15 @@ See `man pass-env` for full documentation.
 
 ## Testing
 
+### Requirements
+
+- `bats` (provided as a submodule)
+
+### Execute Tests
+
 ```bash
 git submodule update --init
+test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+# OR
 make test
 ```
