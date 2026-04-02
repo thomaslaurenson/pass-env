@@ -54,7 +54,7 @@ _fzf_select_entry() {
               --border \
               --prompt="Pass entry: " \
               --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-              ${query:+--query="$query"}
+              "${query:+--query=$query}"
 }
 
 # Resolve a pass entry path, falling back to fzf when not found directly.
@@ -62,7 +62,8 @@ _fzf_select_entry() {
 # If the candidate is non-empty and names a valid .env entry on disk, prints
 # it and returns immediately. Otherwise launches _fzf_select_entry, optionally
 # pre-seeded with the candidate as a query string. Enforces the requirement
-# that all entry names end in .env.
+# that all entry names end in .env and rejects absolute paths and any path
+# component containing '..' to prevent directory traversal outside the store.
 #
 # Arguments:
 #   $1 - Candidate entry path (optional; triggers fzf if empty or not found)
@@ -79,6 +80,10 @@ _resolve_entry() {
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
     if [ -n "$candidate" ]; then
         [[ "$candidate" == *.env ]] || die "entry name must end in .env: $candidate"
+        # Reject absolute paths and any component containing '..' to prevent
+        # directory traversal outside PASSWORD_STORE_DIR.
+        [[ "$candidate" == /* || "$candidate" == *..* ]] && \
+          die "invalid entry path (no traversal allowed): $candidate"
         if [ -f "$password_store_dir/$candidate.gpg" ]; then
             printf '%s\n' "$candidate"
             return
