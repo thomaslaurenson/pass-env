@@ -302,24 +302,40 @@ resolve_paths() {
   fi
 }
 
-# Create a directory, using sudo when the parent is not user-writable.
+# Create a directory, using sudo only for system installs.
+#
+# For user installs, a non-writable directory is an error rather than a
+# reason to silently escalate to sudo.
 #
 # Arguments:
 #   $1 - Directory path to create
+# Globals:
+#   INSTALL_TYPE - read; sudo is only attempted when INSTALL_TYPE=="system"
 # Returns:
 #   0 on success
 maybe_mkdir() {
   local dir="$1"
-  mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
+  if mkdir -p "$dir" 2>/dev/null; then
+    return 0
+  fi
+  if [[ "$INSTALL_TYPE" == "system" ]]; then
+    sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
+  else
+    error "Failed to create directory: $dir (check permissions, or use --system for a system install)"
+  fi
 }
 
-# Install a file to a destination path, using sudo when the destination
-# directory is not user-writable.
+# Install a file to a destination path, using sudo only for system installs.
+#
+# For user installs, a non-writable destination directory is an error rather
+# than a reason to silently escalate to sudo.
 #
 # Arguments:
 #   $1 - File permission mode (e.g. 0644, 0755)
 #   $2 - Source file path
 #   $3 - Destination file path (full path including filename)
+# Globals:
+#   INSTALL_TYPE - read; sudo is only attempted when INSTALL_TYPE=="system"
 # Returns:
 #   0 on success
 maybe_install() {
@@ -331,8 +347,10 @@ maybe_install() {
 
   if [[ -w "$dest_dir" ]]; then
     install -m "$mode" "$src" "$dest"
-  else
+  elif [[ "$INSTALL_TYPE" == "system" ]]; then
     sudo install -m "$mode" "$src" "$dest"
+  else
+    error "Cannot write to $dest_dir (check permissions, or use --system for a system install)"
   fi
 }
 
@@ -690,10 +708,16 @@ main() {
     verify_checksum  "$VERSION" "$tarball"
 
     info "Extracting archive..."
-    tar -xzf "$tarball" -C "$tmp_dir"
+    tar -xzf "$tarball" -C "$tmp_dir" || error "Failed to extract archive"
 
-    src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
-    [[ -d "$src_dir" ]] || error "Could not locate extracted source directory"
+    # Assert the tarball contained exactly one top-level directory.
+    # head -1 would silently pick the first if there were multiple, masking a
+    # malformed or unexpected tarball structure.
+    local -a extracted_dirs
+    mapfile -t extracted_dirs < <(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d)
+    [[ ${#extracted_dirs[@]} -eq 1 ]] \
+      || error "Expected exactly 1 top-level directory in archive, found ${#extracted_dirs[@]}"
+    src_dir="${extracted_dirs[0]}"
   fi
 
   validate_src_dir "$src_dir"
