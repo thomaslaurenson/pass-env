@@ -175,14 +175,22 @@ detect_os() {
 #
 # If src/env.bash is found relative to this script's location, LOCAL_SRC is
 # set to the repository root so the installer can skip the download step.
+# When piped from curl, BASH_SOURCE[0] is empty or '/dev/stdin', so local-source
+# detection is skipped to avoid silently installing from an arbitrary parent
+# directory in the current working directory.
 #
 # Globals:
 #   LOCAL_SRC - set to absolute repo root path, or left empty
 # Returns:
 #   0 always
 detect_local_source() {
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -z "$src" || "$src" == "/dev/stdin" || "$src" == "bash" ]]; then
+    return 0
+  fi
+
   local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_dir="$(cd "$(dirname "$src")" && pwd)"
   local candidate="${script_dir}/.."
   if [[ -f "${candidate}/src/env.bash" ]]; then
     LOCAL_SRC="$(cd "$candidate" && pwd)"
