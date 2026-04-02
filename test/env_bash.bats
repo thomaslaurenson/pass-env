@@ -86,6 +86,26 @@ setup() {
   [[ "$output" =~ "must end in .env" ]]
 }
 
+# path traversal prevention
+
+@test "set: rejects entry with directory traversal (..)" {
+  run bash "$ENV_BASH" set ../../etc/passwd.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
+@test "set: rejects entry with absolute path" {
+  run bash "$ENV_BASH" set /absolute/path.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
+@test "unset: rejects entry with directory traversal (..)" {
+  run bash "$ENV_BASH" unset ../sibling.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
 # set — output format and eval round-trip
 
 @test "set: emits export lines for a valid entry" {
