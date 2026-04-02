@@ -25,7 +25,8 @@ _pass_env_entries() {
   [[ -d "$password_store_dir" ]] || return 0
   local -a entries
   entries=( "${(@f)$(
-    find "$password_store_dir" -name '*.env.gpg' -printf '%P\n' 2>/dev/null \
+    find "$password_store_dir" -name '*.env.gpg' \( -type f -o -type l \) \
+      | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
       | sed 's/\.gpg$//' \
       | sort
   )}" )
