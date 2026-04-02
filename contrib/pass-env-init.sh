@@ -184,8 +184,10 @@ _passenv_load_one() {
     entry="__passenv_$(printf '%s' "$varlist" | cksum | awk '{print $1}')"
   fi
 
-  # Load only validated export lines (defense-in-depth: env.bash validates key
-  # names before emitting, but we filter here as a secondary guard).
+  # Strip any non-export lines (e.g. stray blank lines or debug output).
+  # NOTE: this grep validates the key name only — it does NOT constrain values.
+  # Protection against value-level injection comes entirely from printf %q in
+  # _parse_entry (env.bash). Both layers are required; neither is sufficient alone.
   local safe_output
   safe_output="$(printf '%s\n' "$output" | grep -E '^export [A-Za-z_][A-Za-z0-9_]*=')"
   eval "$safe_output"
@@ -236,7 +238,16 @@ _passenv_unset() {
     # Write a tab-separated preview file so fzf can show var names without
     # needing access to the associative array (not inherited by subprocesses).
     local tmp_preview
-    tmp_preview="$(mktemp)"
+    tmp_preview="$(mktemp)" || { printf 'passenv: failed to create temp file\n' >&2; return 1; }
+
+    # Save existing trap state before overwriting. passenv is a shell function,
+    # so trap modifies the interactive shell's global trap table directly. Without
+    # saving/restoring, any EXIT/INT/TERM traps the user set would be destroyed.
+    local prev_int prev_term prev_exit
+    prev_int="$(trap -p INT)"
+    prev_term="$(trap -p TERM)"
+    prev_exit="$(trap -p EXIT)"
+
     trap 'rm -f "$tmp_preview"' INT TERM EXIT
     _passenv_keys | while IFS= read -r k; do
       printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
@@ -252,7 +263,14 @@ _passenv_unset() {
             --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
             --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "$tmp_preview")")"
     rm -f "$tmp_preview"
+
+    # Restore previous traps. trap -p output is eval-safe: the shell itself
+    # generates it with proper quoting. The :-: default is a no-op command,
+    # used when no trap was previously set (trap -p returns empty string).
     trap - INT TERM EXIT
+    eval "${prev_int:-:}"
+    eval "${prev_term:-:}"
+    eval "${prev_exit:-:}"
 
     [[ -z "$selected" ]] && { printf 'passenv: no entry selected\n'; return 0; }
     while IFS= read -r e; do
