@@ -116,20 +116,31 @@ _passenv_run() {
 # Iterates over the provided entry arguments, calling _passenv_load_one for
 # each. With no arguments, launches an interactive fzf picker via the pass
 # env extension (fzf --multi is enabled inside the extension).
+# If loading multiple entries and one fails, all entries successfully loaded
+# earlier in this call are rolled back (unset and removed from the tracker).
 #
 # Arguments:
 #   $@ - Pass entry paths to load (optional; launches fzf picker if omitted)
 # Returns:
 #   0 if all entries loaded successfully
-#   1 if any entry fails to load
+#   1 if any entry fails to load (previously loaded entries in this call are rolled back)
 _passenv_set() {
   if [[ $# -eq 0 ]]; then
     _passenv_load_one ""
     return
   fi
   local e
+  local loaded=()
   for e in "$@"; do
-    _passenv_load_one "$e" || return 1
+    if _passenv_load_one "$e"; then
+      loaded+=("$e")
+    else
+      if [[ ${#loaded[@]} -gt 0 ]]; then
+        printf 'passenv: rolling back previously loaded entries due to failure\n' >&2
+        _passenv_unset "${loaded[@]}"
+      fi
+      return 1
+    fi
   done
 }
 
@@ -155,8 +166,11 @@ _passenv_load_one() {
   local entry="${1:-}"
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
+  # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
+  local pass_args=()
+  [[ -n "$entry" ]] && pass_args=("$entry")
   local output
-  if ! output="$(pass env set ${entry:+"$entry"})"; then
+  if ! output="$(pass env set "${pass_args[@]}")" ; then
     printf 'passenv: pass env set failed for: %s\n' "${entry:-<interactive>}" >&2
     return 1
   fi
