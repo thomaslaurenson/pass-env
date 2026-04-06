@@ -5,7 +5,7 @@
 # instead of decrypting real GPG entries. Handles two call patterns:
 #
 #   pass show -- ENTRY        used by env.bash via the PASS_CMD variable
-#   pass env set ENTRY        used by shell-init.sh via the PATH 'pass' lookup
+#   pass env set ENTRY        used by pass-env-init.sh via the PATH 'pass' lookup
 #
 # Arguments:
 #   $@ - Forwarded pass arguments (see patterns above)

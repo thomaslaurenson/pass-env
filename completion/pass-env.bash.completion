@@ -24,8 +24,9 @@
 __pass_env_list_entries() {
   local dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
   if [[ -d "$dir" ]]; then
-    (cd "$dir" && find . -type f -name '*.env.gpg' -printf '%P\n') \
-      | sed -E 's#\.gpg$##; s#^\./##'
+    find "$dir" -name '*.env.gpg' \( -type f -o -type l \) \
+      | while IFS= read -r f; do printf '%s\n' "${f#"$dir/"}"; done \
+      | sed 's/\.gpg$//'
   fi
 }
 

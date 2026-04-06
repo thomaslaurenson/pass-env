@@ -5,8 +5,17 @@
 #
 # Requires: 
 # pass with the env extension
-# gpg (bunled with pass)
+# gpg (bundled with pass)
 # fzf (optional, for interactive selection)
+
+# Require bash 4.0+ or zsh. Both support declare -gA / associative arrays.
+# On macOS, /bin/bash is 3.2 (GPLv2 restriction). Users must install bash via
+# Homebrew: brew install bash
+if [[ -z "${ZSH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+  printf 'pass-env-init.sh: bash 4.0+ or zsh required (found bash %s)\n' \
+    "${BASH_VERSION:-unknown}" >&2
+  return 1
+fi
 
 # Initialise the tracking associative array exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
@@ -19,19 +28,22 @@ fi
 # Abstracts the bash/zsh difference in associative-array key iteration:
 # bash uses ${!arr[@]}; zsh uses ${(@k)arr}. Uses eval to parse the zsh
 # syntax without the bash parser ever seeing it.
+# Branches on BASH_VERSION (set by bash itself, not spoofable by end users)
+# rather than ZSH_VERSION (a plain env var that could be set in bash).
 #
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
-#   ZSH_VERSION      - set by zsh; selects the correct iteration syntax
+#   BASH_VERSION     - set by bash; selects the bash iteration syntax
 # Outputs:
 #   stdout: entry key names, one per line
 # Returns:
 #   0 always
 _passenv_keys() {
-  if [[ -n "${ZSH_VERSION:-}" ]]; then
-    eval 'printf "%s\n" "${(@k)_PASSENV_TRACKER}"'
-  else
+  if [[ -n "${BASH_VERSION:-}" ]]; then
     printf '%s\n' "${!_PASSENV_TRACKER[@]}"
+  else
+    # zsh: use parameter expansion flag (@k) for associative array keys
+    eval 'printf "%s\n" "${(@k)_PASSENV_TRACKER}"'
   fi
 }
 
@@ -39,6 +51,12 @@ _passenv_keys() {
 #
 # Avoids the read -a (bash) vs read -A (zsh) incompatibility by relying on
 # unquoted word-splitting, which is consistent across both shells.
+# Word-split $1 intentionally to print one word per line.
+# This avoids the read -a (bash) vs read -A (zsh) incompatibility.
+# Safety: this function is only called with $varlist, whose words are variable
+# names validated against ^[A-Za-z_][A-Za-z0-9_]*$ — that character class
+# excludes all IFS characters (space, tab, newline), so word-splitting on $1
+# is safe and produces exactly one name per line.
 #
 # Arguments:
 #   $1 - Space-separated string of words
@@ -47,7 +65,7 @@ _passenv_keys() {
 # Returns:
 #   0 always
 _passenv_split_words() {
-  # shellcheck disable=SC2086  # intentional: unquoted split on whitespace
+  # shellcheck disable=SC2086
   printf '%s\n' $1
 }
 
@@ -116,20 +134,31 @@ _passenv_run() {
 # Iterates over the provided entry arguments, calling _passenv_load_one for
 # each. With no arguments, launches an interactive fzf picker via the pass
 # env extension (fzf --multi is enabled inside the extension).
+# If loading multiple entries and one fails, all entries successfully loaded
+# earlier in this call are rolled back (unset and removed from the tracker).
 #
 # Arguments:
 #   $@ - Pass entry paths to load (optional; launches fzf picker if omitted)
 # Returns:
 #   0 if all entries loaded successfully
-#   1 if any entry fails to load
+#   1 if any entry fails to load (previously loaded entries in this call are rolled back)
 _passenv_set() {
   if [[ $# -eq 0 ]]; then
     _passenv_load_one ""
     return
   fi
   local e
+  local loaded=()
   for e in "$@"; do
-    _passenv_load_one "$e" || return 1
+    if _passenv_load_one "$e"; then
+      loaded+=("$e")
+    else
+      if [[ ${#loaded[@]} -gt 0 ]]; then
+        printf 'passenv: rolling back previously loaded entries due to failure\n' >&2
+        _passenv_unset "${loaded[@]}"
+      fi
+      return 1
+    fi
   done
 }
 
@@ -155,8 +184,11 @@ _passenv_load_one() {
   local entry="${1:-}"
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
+  # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
+  local pass_args=()
+  [[ -n "$entry" ]] && pass_args=("$entry")
   local output
-  if ! output="$(pass env set ${entry:+"$entry"})"; then
+  if ! output="$(pass env set "${pass_args[@]}")" ; then
     printf 'passenv: pass env set failed for: %s\n' "${entry:-<interactive>}" >&2
     return 1
   fi
@@ -184,8 +216,10 @@ _passenv_load_one() {
     entry="__passenv_$(printf '%s' "$varlist" | cksum | awk '{print $1}')"
   fi
 
-  # Load only validated export lines (defense-in-depth: env.bash validates key
-  # names before emitting, but we filter here as a secondary guard).
+  # Strip any non-export lines (e.g. stray blank lines or debug output).
+  # NOTE: this grep validates the key name only — it does NOT constrain values.
+  # Protection against value-level injection comes entirely from printf %q in
+  # _parse_entry (env.bash). Both layers are required; neither is sufficient alone.
   local safe_output
   safe_output="$(printf '%s\n' "$output" | grep -E '^export [A-Za-z_][A-Za-z0-9_]*=')"
   eval "$safe_output"
@@ -236,7 +270,16 @@ _passenv_unset() {
     # Write a tab-separated preview file so fzf can show var names without
     # needing access to the associative array (not inherited by subprocesses).
     local tmp_preview
-    tmp_preview="$(mktemp)"
+    tmp_preview="$(mktemp)" || { printf 'passenv: failed to create temp file\n' >&2; return 1; }
+
+    # Save existing trap state before overwriting. passenv is a shell function,
+    # so trap modifies the interactive shell's global trap table directly. Without
+    # saving/restoring, any EXIT/INT/TERM traps the user set would be destroyed.
+    local prev_int prev_term prev_exit
+    prev_int="$(trap -p INT)"
+    prev_term="$(trap -p TERM)"
+    prev_exit="$(trap -p EXIT)"
+
     trap 'rm -f "$tmp_preview"' INT TERM EXIT
     _passenv_keys | while IFS= read -r k; do
       printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
@@ -252,7 +295,14 @@ _passenv_unset() {
             --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
             --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "$tmp_preview")")"
     rm -f "$tmp_preview"
+
+    # Restore previous traps. trap -p output is eval-safe: the shell itself
+    # generates it with proper quoting. The :-: default is a no-op command,
+    # used when no trap was previously set (trap -p returns empty string).
     trap - INT TERM EXIT
+    eval "${prev_int:-:}"
+    eval "${prev_term:-:}"
+    eval "${prev_exit:-:}"
 
     [[ -z "$selected" ]] && { printf 'passenv: no entry selected\n'; return 0; }
     while IFS= read -r e; do
@@ -277,8 +327,7 @@ _passenv_unset() {
     done < <(_passenv_split_words "$varlist")
 
     # Remove the entry from the tracker.
-    # eval expands $entry before unset sees the array subscript.
-    eval "unset '_PASSENV_TRACKER[$entry]'"
+    unset "_PASSENV_TRACKER[$entry]"
 
     printf 'passenv: unset %s → %s\n' "$entry" "$varlist"
   done

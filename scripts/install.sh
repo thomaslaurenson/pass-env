@@ -66,6 +66,8 @@ NO_MAN=false
 NO_INIT=false
 NO_UNINSTALL=false
 TAG=""
+DRY_RUN=false
+YES=false
 
 # Populated by detect_local_source(); non-empty means install from this path
 # instead of downloading a release tarball.
@@ -104,6 +106,8 @@ OPTIONS:
   --no-man            Skip man page installation
   --no-init           Skip pass-env-init.sh shell integration
   --no-uninstall      Skip uninstall script installation
+  --dry-run           Show what would be installed without making changes
+  -y, --yes           Skip confirmation prompt (for scripted use)
 
 EXAMPLES:
   # Latest release, system install (default)
@@ -117,6 +121,16 @@ EXAMPLES:
 
   # Minimal install: extension only
   bash install.sh --no-completion --no-man --no-init
+
+SECURITY:
+  When this script is piped directly from curl, it runs without giving you a
+  chance to verify its contents first. For security-conscious installs:
+
+    curl -fsSL .../install.sh -o /tmp/pass-env-install.sh
+    curl -fsSL .../checksums.txt -o /tmp/pass-env-checksums.txt
+    sha256sum --check --ignore-missing /tmp/pass-env-checksums.txt
+    less /tmp/pass-env-install.sh
+    bash /tmp/pass-env-install.sh
 EOF
 }
 
@@ -125,7 +139,7 @@ EOF
 # Arguments:
 #   $@ - Command-line arguments forwarded from main
 # Globals:
-#   TAG, INSTALL_TYPE, NO_COMPLETION, NO_MAN, NO_INIT - updated
+#   TAG, INSTALL_TYPE, NO_COMPLETION, NO_MAN, NO_INIT, DRY_RUN, YES - updated
 # Returns:
 #   0 on success
 #   exits 1 for unknown options
@@ -141,6 +155,8 @@ parse_args() {
       --no-man)        NO_MAN=true;           shift ;;
       --no-init)       NO_INIT=true;          shift ;;
       --no-uninstall)  NO_UNINSTALL=true;     shift ;;
+      --dry-run)       DRY_RUN=true;           shift ;;
+      -y|--yes)        YES=true;               shift ;;
       *) error "Unknown option: $1. Run with --help for usage." ;;
     esac
   done
@@ -154,10 +170,12 @@ parse_args() {
 #   0 on success
 #   exits 1 for unsupported operating systems
 detect_os() {
-  case "$(uname -s)" in
+  local os_name
+  os_name="$(uname -s)"
+  case "$os_name" in
     Linux*)  printf 'linux'  ;;
     Darwin*) printf 'darwin' ;;
-    *)       error "Unsupported operating system: $(uname -s)" ;;
+    *)       error "Unsupported operating system: $os_name" ;;
   esac
 }
 
@@ -165,14 +183,22 @@ detect_os() {
 #
 # If src/env.bash is found relative to this script's location, LOCAL_SRC is
 # set to the repository root so the installer can skip the download step.
+# When piped from curl, BASH_SOURCE[0] is empty or '/dev/stdin', so local-source
+# detection is skipped to avoid silently installing from an arbitrary parent
+# directory in the current working directory.
 #
 # Globals:
 #   LOCAL_SRC - set to absolute repo root path, or left empty
 # Returns:
 #   0 always
 detect_local_source() {
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -z "$src" || "$src" == "/dev/stdin" || "$src" == "bash" ]]; then
+    return 0
+  fi
+
   local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_dir="$(cd "$(dirname "$src")" && pwd)"
   local candidate="${script_dir}/.."
   if [[ -f "${candidate}/src/env.bash" ]]; then
     LOCAL_SRC="$(cd "$candidate" && pwd)"
@@ -195,7 +221,7 @@ detect_needs_enable_extensions() {
   local pass_bin sys_ext_dir
   pass_bin="$(command -v pass 2>/dev/null)" || return 0
   sys_ext_dir="$(grep -m1 '^SYSTEM_EXTENSION_DIR=' "$pass_bin" \
-    | sed -E 's/SYSTEM_EXTENSION_DIR="?([^"]*).*/\1/')" || true
+    | sed -E 's/SYSTEM_EXTENSION_DIR="?([^"[:space:]]*)"?.*/\1/')" || true
   if [[ -z "$sys_ext_dir" || "$EXTENSION_DIR" != "$sys_ext_dir" ]]; then
     NEEDS_ENABLE_EXTENSIONS=true
   fi
@@ -284,24 +310,46 @@ resolve_paths() {
   fi
 }
 
-# Create a directory, using sudo when the parent is not user-writable.
+# Create a directory, using sudo only for system installs.
+#
+# For user installs, a non-writable directory is an error rather than a
+# reason to silently escalate to sudo.
 #
 # Arguments:
 #   $1 - Directory path to create
+# Globals:
+#   INSTALL_TYPE - read; sudo is only attempted when INSTALL_TYPE=="system"
+#   DRY_RUN      - read; if true, logs the operation and returns without executing
 # Returns:
 #   0 on success
 maybe_mkdir() {
   local dir="$1"
-  mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] would create: $dir"
+    return 0
+  fi
+  if mkdir -p "$dir" 2>/dev/null; then
+    return 0
+  fi
+  if [[ "$INSTALL_TYPE" == "system" ]]; then
+    sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
+  else
+    error "Failed to create directory: $dir (check permissions, or use --system for a system install)"
+  fi
 }
 
-# Install a file to a destination path, using sudo when the destination
-# directory is not user-writable.
+# Install a file to a destination path, using sudo only for system installs.
+#
+# For user installs, a non-writable destination directory is an error rather
+# than a reason to silently escalate to sudo.
 #
 # Arguments:
 #   $1 - File permission mode (e.g. 0644, 0755)
 #   $2 - Source file path
 #   $3 - Destination file path (full path including filename)
+# Globals:
+#   INSTALL_TYPE - read; sudo is only attempted when INSTALL_TYPE=="system"
+#   DRY_RUN      - read; if true, logs the operation and returns without executing
 # Returns:
 #   0 on success
 maybe_install() {
@@ -311,10 +359,16 @@ maybe_install() {
   local dest_dir
   dest_dir="$(dirname "$dest")"
 
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] would install: $src -> $dest"
+    return 0
+  fi
   if [[ -w "$dest_dir" ]]; then
     install -m "$mode" "$src" "$dest"
-  else
+  elif [[ "$INSTALL_TYPE" == "system" ]]; then
     sudo install -m "$mode" "$src" "$dest"
+  else
+    error "Cannot write to $dest_dir (check permissions, or use --system for a system install)"
   fi
 }
 
@@ -353,11 +407,11 @@ resolve_version() {
     info "Fetching latest release version..."
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
     if command -v curl &>/dev/null; then
-      VERSION="$(curl -fsSL "$api_url" \
+      VERSION="$(curl -fsSL --max-time 30 "$api_url" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     elif command -v wget &>/dev/null; then
-      VERSION="$(wget -qO- "$api_url" \
+      VERSION="$(wget --timeout=30 -qO- "$api_url" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     else
@@ -389,9 +443,9 @@ download_tarball() {
   step "$url"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL "$url" -o "$dest" || error "Download failed: $url"
+    curl -fsSL --max-time 30 "$url" -o "$dest" || error "Download failed: $url"
   elif command -v wget &>/dev/null; then
-    wget -qO "$dest" "$url" || error "Download failed: $url"
+    wget --timeout=30 -qO "$dest" "$url" || error "Download failed: $url"
   else
     error "curl or wget is required"
   fi
@@ -432,17 +486,17 @@ verify_checksum() {
   local checksums_file="${tarball%/*}/checksums.txt"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL "$checksums_url" -o "$checksums_file" \
+    curl -fsSL --max-time 30 "$checksums_url" -o "$checksums_file" \
       || error "Failed to download checksums.txt: $checksums_url"
   elif command -v wget &>/dev/null; then
-    wget -qO "$checksums_file" "$checksums_url" \
+    wget --timeout=30 -qO "$checksums_file" "$checksums_url" \
       || error "Failed to download checksums.txt: $checksums_url"
   else
     error "curl or wget is required"
   fi
 
   local expected_hash
-  expected_hash="$(grep " ${tarball_name}$" "$checksums_file" | awk '{print $1}')"
+  expected_hash="$(grep -F " ${tarball_name}" "$checksums_file" | awk '{print $1}')"
   [[ -n "$expected_hash" ]] \
     || error "No checksum entry found for ${tarball_name} in checksums.txt"
 
@@ -657,6 +711,12 @@ main() {
   detect_needs_enable_extensions
   show_summary "$VERSION" "$os"
 
+  if [[ "$YES" != true && "$DRY_RUN" != true ]]; then
+    printf '\nProceed with installation? [y/N] '
+    read -r reply
+    [[ "$reply" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+  fi
+
   local src_dir
 
   if [[ -n "$LOCAL_SRC" ]]; then
@@ -672,10 +732,16 @@ main() {
     verify_checksum  "$VERSION" "$tarball"
 
     info "Extracting archive..."
-    tar -xzf "$tarball" -C "$tmp_dir"
+    tar -xzf "$tarball" -C "$tmp_dir" || error "Failed to extract archive"
 
-    src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
-    [[ -d "$src_dir" ]] || error "Could not locate extracted source directory"
+    # Assert the tarball contained exactly one top-level directory.
+    # head -1 would silently pick the first if there were multiple, masking a
+    # malformed or unexpected tarball structure.
+    local -a extracted_dirs
+    mapfile -t extracted_dirs < <(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d)
+    [[ ${#extracted_dirs[@]} -eq 1 ]] \
+      || error "Expected exactly 1 top-level directory in archive, found ${#extracted_dirs[@]}"
+    src_dir="${extracted_dirs[0]}"
   fi
 
   validate_src_dir "$src_dir"

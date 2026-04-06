@@ -4,12 +4,23 @@ on: workflow_call
 
 jobs:
   lint:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get install -y shellcheck zsh
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck bash
+
+      - name: Print bash version
+        run: bash --version
 
       - name: Run linter
         run: make lint

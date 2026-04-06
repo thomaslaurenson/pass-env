@@ -79,6 +79,13 @@ setup() {
   [[ -n "${_PASSENV_TRACKER[second.env]:-}" ]]
 }
 
+@test "set: rolls back previously loaded entries when a later entry fails" {
+  # myentry.env loads fine; nonexistent.env has no fixture so mock_pass exits 1
+  passenv set "myentry.env" "nonexistent.env" 2>/dev/null || true
+  [[ -z "${MY_VAR:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[myentry.env]:-}" ]]
+}
+
 @test "unset: prints a message and returns 0 when no entries are loaded" {
   run passenv unset
   [ "$status" -eq 0 ]

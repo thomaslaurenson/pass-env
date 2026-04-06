@@ -4,11 +4,21 @@ on: workflow_call
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: true
+
+      - name: Install bash (macOS — system bash 3.2 is too old for bats)
+        if: runner.os == 'macOS'
+        run: brew install bash
+
+      - name: Print bash version
+        run: bash --version
 
       - name: Run tests
         run: make test

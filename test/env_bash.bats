@@ -86,6 +86,26 @@ setup() {
   [[ "$output" =~ "must end in .env" ]]
 }
 
+# path traversal prevention
+
+@test "set: rejects entry with directory traversal (..)" {
+  run bash "$ENV_BASH" set ../../etc/passwd.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
+@test "set: rejects entry with absolute path" {
+  run bash "$ENV_BASH" set /absolute/path.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
+@test "unset: rejects entry with directory traversal (..)" {
+  run bash "$ENV_BASH" unset ../sibling.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "no traversal allowed" ]]
+}
+
 # set — output format and eval round-trip
 
 @test "set: emits export lines for a valid entry" {
@@ -162,4 +182,63 @@ setup() {
 @test "run: preserves the exit status of the subprocess" {
   run bash "$ENV_BASH" run myentry.env -- bash -c 'exit 42'
   [ "$status" -eq 42 ]
+}
+
+# CRLF handling
+
+@test "set: strips trailing CR from values in CRLF-encoded entries" {
+  eval "$(bash "$ENV_BASH" set crlf.env)"
+  # Value must equal the clean string with no embedded carriage return
+  [[ "$CRLF_VAR" == "testvalue" ]]
+  [[ "${#CRLF_VAR}" -eq 9 ]]
+}
+
+# Error message safety
+
+@test "set: error for unsupported line format does not include the secret value" {
+  run bash "$ENV_BASH" set badformat.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "unsupported line format" ]]
+  ! [[ "$output" =~ "supersecret123" ]]
+}
+
+# Symlinked store entries
+
+@test "list: includes symlinked .env entries" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "symlinked.env" ]]
+}
+
+# IFS-safe unset output
+
+@test "unset: output is correct regardless of IFS value" {
+  local result
+  result="$(IFS=':' bash "$ENV_BASH" unset myentry.env)"
+  [[ "$result" =~ "unset" ]]
+  [[ "$result" =~ "MY_VAR" ]]
+  [[ "$result" =~ "MY_OTHER" ]]
+  # No IFS character should appear between the key names
+  ! [[ "$result" =~ "MY_VAR:MY_OTHER" ]]
+}
+
+# Injection resistance
+
+@test "set: shell metacharacters in values are neutralised by printf %q" {
+  eval "$(bash "$ENV_BASH" set injection.env)"
+  # Values must be literal strings, not executed
+  [[ "$SAFE_VAR" == '$(echo INJECTED)' ]]
+  [[ "$BACKTICK_VAR" == '`echo INJECTED`' ]]
+  [[ "$SEMI_VAR" == 'val; echo INJECTED' ]]
+}
+
+# Spaces in PASSWORD_STORE_DIR
+
+@test "list: works when PASSWORD_STORE_DIR contains spaces" {
+  local spaced_dir="$BATS_TEST_TMPDIR/store with spaces"
+  mkdir -p "$spaced_dir"
+  touch "$spaced_dir/myentry.env.gpg"
+  run env "PASSWORD_STORE_DIR=$spaced_dir" bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "myentry.env" ]]
 }
