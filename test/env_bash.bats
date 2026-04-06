@@ -201,3 +201,23 @@ setup() {
   [[ "$output" =~ "unsupported line format" ]]
   ! [[ "$output" =~ "supersecret123" ]]
 }
+
+# Symlinked store entries
+
+@test "list: includes symlinked .env entries" {
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "symlinked.env" ]]
+}
+
+# IFS-safe unset output
+
+@test "unset: output is correct regardless of IFS value" {
+  local result
+  result="$(IFS=':' bash "$ENV_BASH" unset myentry.env)"
+  [[ "$result" =~ "unset" ]]
+  [[ "$result" =~ "MY_VAR" ]]
+  [[ "$result" =~ "MY_OTHER" ]]
+  # No IFS character should appear between the key names
+  ! [[ "$result" =~ "MY_VAR:MY_OTHER" ]]
+}
