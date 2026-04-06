@@ -38,7 +38,7 @@ bash /tmp/pass-env-install.sh
 ### Quick Install
 
 ```sh
-curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash -s -- --yes
 ```
 
 For a user-local install with no `sudo`, pass the `--user` argument:
