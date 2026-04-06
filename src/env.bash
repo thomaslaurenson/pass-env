@@ -44,7 +44,7 @@ _fzf_select_entry() {
         die "--entry PATH is required (fzf not installed for interactive selection)"
     fi
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
-    find "$password_store_dir" -name "*.env.gpg" -type f \
+    find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
         | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
         | sed 's/\.gpg$//' \
         | sort \
@@ -159,7 +159,7 @@ version() {
 #   0 always
 list_entries() {
   local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
-  find "$password_store_dir" -name "*.env.gpg" -type f \
+  find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
     | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
     | sed 's/\.gpg$//' \
     | sort
@@ -198,20 +198,6 @@ _parse_entry() {
   done <<< "$content"
 }
 
-# Emit KEY=QUOTEDVAL lines from a pass entry.
-#
-# Thin wrapper around _parse_entry; used internally by run_with_env.
-#
-# Arguments:
-#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
-# Outputs:
-#   stdout: KEY=QUOTEDVAL lines, one per variable
-# Returns:
-#   0 on success, exits 1 on any error (see _parse_entry)
-print_entry() {
-  _parse_entry "$1"
-}
-
 # Execute a command with environment variables from one or more pass entries.
 #
 # Entries are loaded and the command is executed entirely within a subshell;
@@ -225,7 +211,7 @@ print_entry() {
 # Returns:
 #   exit status of COMMAND
 #   exits 1 if ENTRY or COMMAND arguments are missing
-run_with_env() {
+_run_with_env() {
   local entries=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     entries+=("$1"); shift
@@ -235,7 +221,7 @@ run_with_env() {
   [ "$#" -ge 1 ] || die "run: missing COMMAND"
   (
     for e in "${entries[@]}"; do
-      eval "$(set_env "$e")"
+      eval "$(_set_env "$e")"
     done
     exec "$@"
   )
@@ -244,7 +230,7 @@ run_with_env() {
 # Emit 'export KEY=QUOTEDVAL' lines for all variables in a pass entry.
 #
 # Output is intended to be captured and eval'd by the caller to load variables
-# into the current shell. When used via contrib/shell-init.sh, _passenv_load_one
+# into the current shell. When used via contrib/pass-env-init.sh, _passenv_load_one
 # handles the eval automatically.
 #
 # Arguments:
@@ -253,7 +239,7 @@ run_with_env() {
 #   stdout: 'export KEY=QUOTEDVAL' lines, one per variable
 # Returns:
 #   0 on success, exits 1 on any error (see _parse_entry)
-set_env() {
+_set_env() {
   _parse_entry "$1" | sed 's/^/export /'
 }
 
@@ -268,12 +254,16 @@ set_env() {
 #   stdout: 'unset KEY ...' line (omitted if the entry defines no variables)
 # Returns:
 #   0 on success, exits 1 on any error (see _parse_entry)
-unset_env() {
+_unset_env() {
   local keys=() line
   while IFS= read -r line; do
     keys+=("${line%%=*}")
   done < <(_parse_entry "$1")
-  [ ${#keys[@]} -gt 0 ] && printf 'unset %s\n' "${keys[*]}"
+  if [ ${#keys[@]} -gt 0 ]; then
+    local k stmt="unset"
+    for k in "${keys[@]}"; do stmt+=' '"$k"; done
+    printf '%s\n' "$stmt"
+  fi
 }
 
 # Dispatch to the appropriate subcommand handler.
@@ -309,7 +299,7 @@ case "$cmd" in
         while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "$raw_e")
       done
     fi
-    run_with_env "${entries[@]}" -- "$@"
+    _run_with_env "${entries[@]}" -- "$@"
     ;;
   set)
     raw_entries=()
@@ -322,11 +312,11 @@ case "$cmd" in
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       resolved="$(_resolve_entry "")" || exit 1
-      while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
+      while IFS= read -r e; do _set_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
         resolved="$(_resolve_entry "$raw_e")" || exit 1
-        while IFS= read -r e; do set_env "$e"; done <<< "$resolved"
+        while IFS= read -r e; do _set_env "$e"; done <<< "$resolved"
       done
     fi
     ;;
@@ -341,11 +331,11 @@ case "$cmd" in
     done
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       resolved="$(_resolve_entry "")" || exit 1
-      while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
+      while IFS= read -r e; do _unset_env "$e"; done <<< "$resolved"
     else
       for raw_e in "${raw_entries[@]}"; do
         resolved="$(_resolve_entry "$raw_e")" || exit 1
-        while IFS= read -r e; do unset_env "$e"; done <<< "$resolved"
+        while IFS= read -r e; do _unset_env "$e"; done <<< "$resolved"
       done
     fi
     ;;
