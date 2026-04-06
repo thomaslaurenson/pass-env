@@ -8,6 +8,15 @@
 # gpg (bunled with pass)
 # fzf (optional, for interactive selection)
 
+# Require bash 4.0+ or zsh. Both support declare -gA / associative arrays.
+# On macOS, /bin/bash is 3.2 (GPLv2 restriction). Users must install bash via
+# Homebrew: brew install bash
+if [[ -z "${ZSH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+  printf 'pass-env-init.sh: bash 4.0+ or zsh required (found bash %s)\n' \
+    "${BASH_VERSION:-unknown}" >&2
+  return 1
+fi
+
 # Initialise the tracking associative array exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
 if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
@@ -19,19 +28,22 @@ fi
 # Abstracts the bash/zsh difference in associative-array key iteration:
 # bash uses ${!arr[@]}; zsh uses ${(@k)arr}. Uses eval to parse the zsh
 # syntax without the bash parser ever seeing it.
+# Branches on BASH_VERSION (set by bash itself, not spoofable by end users)
+# rather than ZSH_VERSION (a plain env var that could be set in bash).
 #
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
-#   ZSH_VERSION      - set by zsh; selects the correct iteration syntax
+#   BASH_VERSION     - set by bash; selects the bash iteration syntax
 # Outputs:
 #   stdout: entry key names, one per line
 # Returns:
 #   0 always
 _passenv_keys() {
-  if [[ -n "${ZSH_VERSION:-}" ]]; then
-    eval 'printf "%s\n" "${(@k)_PASSENV_TRACKER}"'
-  else
+  if [[ -n "${BASH_VERSION:-}" ]]; then
     printf '%s\n' "${!_PASSENV_TRACKER[@]}"
+  else
+    # zsh: use parameter expansion flag (@k) for associative array keys
+    eval 'printf "%s\n" "${(@k)_PASSENV_TRACKER}"'
   fi
 }
 
@@ -39,6 +51,12 @@ _passenv_keys() {
 #
 # Avoids the read -a (bash) vs read -A (zsh) incompatibility by relying on
 # unquoted word-splitting, which is consistent across both shells.
+# Word-split $1 intentionally to print one word per line.
+# This avoids the read -a (bash) vs read -A (zsh) incompatibility.
+# Safety: this function is only called with $varlist, whose words are variable
+# names validated against ^[A-Za-z_][A-Za-z0-9_]*$ — that character class
+# excludes all IFS characters (space, tab, newline), so word-splitting on $1
+# is safe and produces exactly one name per line.
 #
 # Arguments:
 #   $1 - Space-separated string of words
@@ -47,7 +65,7 @@ _passenv_keys() {
 # Returns:
 #   0 always
 _passenv_split_words() {
-  # shellcheck disable=SC2086  # intentional: unquoted split on whitespace
+  # shellcheck disable=SC2086
   printf '%s\n' $1
 }
 
