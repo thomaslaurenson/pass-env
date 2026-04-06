@@ -221,3 +221,24 @@ setup() {
   # No IFS character should appear between the key names
   ! [[ "$result" =~ "MY_VAR:MY_OTHER" ]]
 }
+
+# Injection resistance
+
+@test "set: shell metacharacters in values are neutralised by printf %q" {
+  eval "$(bash "$ENV_BASH" set injection.env)"
+  # Values must be literal strings, not executed
+  [[ "$SAFE_VAR" == '$(echo INJECTED)' ]]
+  [[ "$BACKTICK_VAR" == '`echo INJECTED`' ]]
+  [[ "$SEMI_VAR" == 'val; echo INJECTED' ]]
+}
+
+# Spaces in PASSWORD_STORE_DIR
+
+@test "list: works when PASSWORD_STORE_DIR contains spaces" {
+  local spaced_dir="$BATS_TEST_TMPDIR/store with spaces"
+  mkdir -p "$spaced_dir"
+  touch "$spaced_dir/myentry.env.gpg"
+  run env "PASSWORD_STORE_DIR=$spaced_dir" bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "myentry.env" ]]
+}
