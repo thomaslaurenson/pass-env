@@ -5,7 +5,7 @@
 #
 # Requires: 
 # pass with the env extension
-# gpg (bunled with pass)
+# gpg (bundled with pass)
 # fzf (optional, for interactive selection)
 
 # Require bash 4.0+ or zsh. Both support declare -gA / associative arrays.
