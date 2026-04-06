@@ -113,6 +113,18 @@ pass env run api/openai.env db/prod.env -- myapp
 
 See `man pass-env` for full documentation.
 
+## Security Notes
+
+### Memory Residency
+
+Decrypted pass entry content is held as a bash variable during parsing. Bash provides no mechanism to zero memory on `unset`. On Linux, the decrypted values remain in the process's virtual memory until reclaimed and are readable by same-user processes via `/proc/<pid>/mem`.
+
+For workloads where this matters, use `pass env run` to inject secrets into a subprocess rather than loading them into the shell with `passenv set`. Secrets are never stored in shell variables when using the `run` subcommand.
+
+### Environment Visibility
+
+Variables loaded with `passenv set` are visible in the process environment of any child process spawned from that shell. If you need to scope secrets to a single command, use `pass env run` instead.
+
 ## Testing
 
 ### Requirements
