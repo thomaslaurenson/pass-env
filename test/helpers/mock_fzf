@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Mock fzf for tests.
+#
+# Controlled entirely by MOCK_FZF_OUTPUT:
+#   - If set: prints that value and exits 0 (simulates a completed selection).
+#   - If unset/empty: exits 130 (simulates the user pressing ESC / no selection).
+#
+# All flags and stdin are silently ignored, matching real fzf's interface.
+
+if [[ -n "${MOCK_FZF_OUTPUT:-}" ]]; then
+  printf '%s\n' "$MOCK_FZF_OUTPUT"
+  exit 0
+fi
+
+exit 130

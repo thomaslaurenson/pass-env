@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 - 2026-04-08
+
+### Added
+
+- Tests for fzf integration using custom mock
+
+### Fixed
+
+- Bug in pass env run command not loading fzf list of entries
+
 ## 0.2.0 - 2026-04-06
 
 ### Added

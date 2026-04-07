@@ -232,6 +232,65 @@ setup() {
   [[ "$SEMI_VAR" == 'val; echo INJECTED' ]]
 }
 
+# Interactive fzf selection
+
+@test "run: exits non-zero and reports 'No entry selected' when fzf returns no selection" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" bash "$ENV_BASH" run -- true
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "No entry selected" ]]
+}
+
+@test "run: uses fzf selection when no entry argument is given" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" run -- printenv MY_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue" ]]
+}
+
+@test "set: exits non-zero and reports 'No entry selected' when fzf returns no selection" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" bash "$ENV_BASH" set
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "No entry selected" ]]
+}
+
+@test "set: uses fzf selection when no entry argument is given" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" set
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "export MY_VAR=" ]]
+  [[ "$output" =~ "export MY_OTHER=" ]]
+}
+
+@test "unset: exits non-zero and reports 'No entry selected' when fzf returns no selection" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" bash "$ENV_BASH" unset
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "No entry selected" ]]
+}
+
+@test "unset: uses fzf selection when no entry argument is given" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  run env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" unset
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "unset" ]]
+  [[ "$output" =~ "MY_VAR" ]]
+  [[ "$output" =~ "MY_OTHER" ]]
+}
+
 # Spaces in PASSWORD_STORE_DIR
 
 @test "list: works when PASSWORD_STORE_DIR contains spaces" {

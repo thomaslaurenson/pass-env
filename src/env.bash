@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="0.2.0"
+VERSION="0.2.1"
 
 PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
 
@@ -292,11 +292,13 @@ case "$cmd" in
     fi
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       entries=()
-      while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "")
+      resolved="$(_resolve_entry "")" || exit 1
+      while IFS= read -r e; do entries+=("$e"); done <<< "$resolved"
     else
       entries=()
       for raw_e in "${raw_entries[@]}"; do
-        while IFS= read -r e; do entries+=("$e"); done < <(_resolve_entry "$raw_e")
+        resolved="$(_resolve_entry "$raw_e")" || exit 1
+        while IFS= read -r e; do entries+=("$e"); done <<< "$resolved"
       done
     fi
     _run_with_env "${entries[@]}" -- "$@"
