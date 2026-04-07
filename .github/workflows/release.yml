@@ -10,13 +10,27 @@ jobs:
         with:
           submodules: true
 
+      - name: Read version from src/env.bash
+        id: version
+        run: |
+          python3 - <<'PY'
+          import re, pathlib, os
+          content = pathlib.Path("src/env.bash").read_text()
+          match = re.search(r"""^VERSION=["']?([^"'#\s]+)""", content, re.MULTILINE)
+          if not match:
+              raise SystemExit("ERROR: VERSION not found in src/env.bash")
+          version = match.group(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"value={version}\n")
+          PY
+
       - name: Verify version matches tag
         run: |
-          version=$(grep '^VERSION=' src/env.bash | sed 's/VERSION="\(.*\)"/\1/')
-          tag="${{ github.ref_name }}"
-          expected="${tag#v}"
-          if [[ "$version" != "$expected" ]]; then
-            echo "ERROR: VERSION in src/env.bash ($version) does not match tag ($tag)"
+          VERSION="${{ steps.version.outputs.value }}"
+          TAG="${{ github.ref_name }}"
+          EXPECTED="${TAG#v}"
+          if [[ "$VERSION" != "$EXPECTED" ]]; then
+            echo "ERROR: src/env.bash version ($VERSION) does not match tag ($TAG)"
             exit 1
           fi
 
@@ -48,7 +62,10 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           body_path: release_notes.md
+          fail_on_unmatched_files: true
           files: |
             ${{ env.ARCHIVE }}
             install.sh
