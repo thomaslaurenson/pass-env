@@ -44,17 +44,20 @@ _fzf_select_entry() {
         die "--entry PATH is required (fzf not installed for interactive selection)"
     fi
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+    local fzf_args=(
+        --multi
+        --height=40%
+        --layout=reverse
+        --border
+        --prompt="Pass entry: "
+        --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel"
+    )
+    [[ -n "$query" ]] && fzf_args+=("--query=$query")
     find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
         | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
         | sed 's/\.gpg$//' \
         | sort \
-        | fzf --multi \
-              --height=40% \
-              --layout=reverse \
-              --border \
-              --prompt="Pass entry: " \
-              --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-              "${query:+--query=$query}"
+        | fzf "${fzf_args[@]}"
 }
 
 # Resolve a pass entry path, falling back to fzf when not found directly.
