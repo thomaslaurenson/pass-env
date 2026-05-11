@@ -1,4 +1,4 @@
-.TH pass-env 1 "2026 March 15" "Version 0.1.2" "User Commands"
+.TH pass-env 1 "2026 May 11" "Version 0.2.1" "User Commands"
 
 .SH NAME
 pass-env \- a password-store extension to manage environment variables from encrypted .env entries
@@ -138,17 +138,20 @@ variable
 so that they can be unloaded by name.
 
 .TP
-.BI "passenv set " "[ENTRY ...]"
+.BI "passenv set " "[--force] [ENTRY ...]"
 Load one or more entries into the current shell.  If no
 .I ENTRY
 is given, launches an interactive
 .BR fzf (1)
-picker.
+picker.  If an entry is already loaded, it is skipped with a message unless
+.B --force
+is given, which forces a reload (re-decrypting the entry).
 .PP
 .RS
 .EX
 passenv set os/prod.env
 passenv set os/prod.env api/openai.env
+passenv set --force os/prod.env
 .EE
 .RE
 
@@ -233,6 +236,11 @@ Entry filenames must end in
 (the
 .I .gpg
 suffix is added by pass automatically).
+.IP \(bu 4
+Values cannot span multiple lines.
+Newlines within values are not supported; a line that does not match
+.I KEY=VALUE
+format triggers an error.
 
 .SH ENVIRONMENT
 
@@ -240,13 +248,6 @@ suffix is added by pass automatically).
 .B PASSWORD_STORE_DIR
 Root directory of the password store.  Defaults to
 .IR ~/.password-store .
-
-.TP
-.B PASS_CMD
-The
-.BR pass (1)
-executable to invoke.  Defaults to
-.BR pass .
 
 .SH SEE ALSO
 .BR pass (1),

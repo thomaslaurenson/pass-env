@@ -111,9 +111,23 @@ passenv run api/openai.env db/prod.env -- myapp
 pass env run api/openai.env db/prod.env -- myapp
 ```
 
+> **Note:** Values cannot span multiple lines. Newlines within values are not supported; each line must be a complete `KEY=VALUE` pair.
+
 See `man pass-env` for full documentation.
 
 ## Security Notes
+
+### Eval Trust Boundary
+
+`passenv set` and `eval "$(pass env set ...)"` execute the decrypted entry content as shell code. If an attacker can write to an entry in your password store — via a compromised GPG key, a shared store, or a symlink attack — they can execute arbitrary commands in your shell the next time you load that entry.
+
+The security of `passenv set` is bounded by the security of your GPG key and password store. It is not stronger than that.
+
+If you need to run a single command with secrets and want to avoid the eval trust boundary entirely, use `pass env run` — it never evals entry content into a shell.
+
+### Session-Local Tracker
+
+`_PASSENV_TRACKER` is session-local and reset on shell exit. Variables loaded with `passenv set` reflect the state of the store at the time of loading. If an entry is updated in the store, existing shells will not see the change until `passenv set` is run again in that shell. Multiple shells loading the same entry each maintain independent copies of the variables.
 
 ### Memory Residency
 
