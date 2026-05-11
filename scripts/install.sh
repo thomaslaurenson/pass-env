@@ -148,6 +148,8 @@ parse_args() {
     case "$1" in
       -h|--help)       show_help; exit 0 ;;
       --tag)           [[ $# -ge 2 ]] || error "--tag requires a version argument (e.g. --tag v1.2.3)"
+                         [[ "$2" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                           || error "--tag value must be a version number (e.g. v1.2.3 or 1.2.3), got: $2"
                          TAG="$2"; shift 2 ;;
       --user)          INSTALL_TYPE="user";   shift ;;
       --system)        INSTALL_TYPE="system"; shift ;;

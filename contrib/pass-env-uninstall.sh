@@ -161,12 +161,15 @@ maybe_rm() {
 maybe_rmdir() {
   local dir="$1"
   [[ -d "$dir" ]] || return 0
-  if [[ -z "$(ls -A "$dir")" ]]; then
-    if [[ -w "$(dirname "$dir")" ]]; then
-      rmdir "$dir"
-    else
-      sudo rmdir "$dir"
-    fi
+
+  local removed=false
+  if rmdir "$dir" 2>/dev/null; then
+    removed=true
+  elif [[ ! -w "$(dirname "$dir")" ]] && sudo rmdir "$dir" 2>/dev/null; then
+    removed=true
+  fi
+
+  if [[ "$removed" == true ]]; then
     printf "  ${RED}-${NC} %s  ${RED}[dir removed]${NC}\n" "$dir"
   else
     printf "  ${YELLOW}-${NC} %s  ${YELLOW}[kept — not empty]${NC}\n" "$dir"
@@ -237,6 +240,11 @@ strip_rc_block() {
   if ! grep -qF "$sentinel_begin" "$rc_file"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[not installed]${NC}\n" "$display"
     return 0
+  fi
+
+  if ! grep -qF "$sentinel_end" "$rc_file"; then
+    printf 'passenv: END sentinel missing in %s — manual cleanup required\n' "$rc_file" >&2
+    return 1
   fi
 
   portable_sed_inplace "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file"
