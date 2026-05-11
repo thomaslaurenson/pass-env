@@ -3,10 +3,15 @@
 # Source this in ~/.bashrc and/or ~/.zshrc:
 # source /path/to/pass-env/contrib/pass-env-init.sh
 #
-# Requires: 
+# Requires:
 # pass with the env extension
 # gpg (bundled with pass)
 # fzf (optional, for interactive selection)
+
+# Note: set -euo pipefail is intentionally absent. This file is sourced into
+# the user's interactive shell; enabling errexit here would cause the shell
+# to exit on any error inside passenv functions, which would be catastrophic
+# for an interactive session.
 
 # Require bash 4.0+ or zsh. Both support declare -gA / associative arrays.
 # On macOS, /bin/bash is 3.2 (GPLv2 restriction). Users must install bash via
@@ -65,8 +70,19 @@ _passenv_keys() {
 # Returns:
 #   0 always
 _passenv_split_words() {
-  # shellcheck disable=SC2086
-  printf '%s\n' $1
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    # In zsh, unquoted $1 does not word-split by default; ${=1} enables it.
+    # Safety contract: callers must only pass variable names validated against
+    # ^[A-Za-z_][A-Za-z0-9_]*$ — that character class excludes all IFS chars,
+    # making word-splitting safe and deterministic. Never call with arbitrary input.
+    # shellcheck disable=SC2086,SC2296
+    printf '%s\n' ${=1}
+  else
+    # shellcheck disable=SC2086  # Unquoted word-splitting is intentional here.
+    # Safety contract: as above. This disable is load-bearing; do not remove
+    # without understanding this contract.
+    printf '%s\n' $1
+  fi
 }
 
 # Main entry point for the passenv shell function.
@@ -143,14 +159,20 @@ _passenv_run() {
 #   0 if all entries loaded successfully
 #   1 if any entry fails to load (previously loaded entries in this call are rolled back)
 _passenv_set() {
+  local force=false
+  if [[ "${1:-}" == "--force" ]]; then
+    force=true
+    shift
+  fi
+
   if [[ $# -eq 0 ]]; then
-    _passenv_load_one ""
+    _passenv_load_one "" "$force"
     return
   fi
   local e
   local loaded=()
   for e in "$@"; do
-    if _passenv_load_one "$e"; then
+    if _passenv_load_one "$e" "$force"; then
       loaded+=("$e")
     else
       if [[ ${#loaded[@]} -gt 0 ]]; then
@@ -182,6 +204,12 @@ _passenv_set() {
 #   1 if the pass command fails, returns no output, or emits no valid exports
 _passenv_load_one() {
   local entry="${1:-}"
+  local force="${2:-false}"
+
+  if [[ -n "$entry" && "$force" != true && -n "${_PASSENV_TRACKER[$entry]+x}" ]]; then
+    printf 'passenv: %s is already loaded (use --force to reload)\n' "$entry"
+    return 0
+  fi
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
   # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
@@ -213,7 +241,7 @@ _passenv_load_one() {
   # When no entry was given, fzf resolved it inside the extension but never
   # surfaces the chosen name. Derive a stable tracker key from the var names.
   if [[ -z "$entry" ]]; then
-    entry="__passenv_$(printf '%s' "$varlist" | cksum | awk '{print $1}')"
+    entry="__passenv_$(printf '%s' "$varlist" | tr ' ' '_')"
   fi
 
   # Strip any non-export lines (e.g. stray blank lines or debug output).
@@ -233,7 +261,7 @@ _passenv_load_one() {
   else
     merged="$varlist"
   fi
-  _PASSENV_TRACKER["$entry"]="$merged"
+  _PASSENV_TRACKER[$entry]="$merged"
 
   printf 'passenv: loaded %s → %s\n' "$entry" "$merged"
 }
@@ -255,7 +283,7 @@ _passenv_load_one() {
 #   0 always (errors for individual entries are non-fatal)
 _passenv_unset() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
-    printf 'passenv: no entries are currently loaded\n'
+    printf 'passenv: no entries are currently loaded\n' >&2
     return 0
   fi
 
@@ -312,7 +340,7 @@ _passenv_unset() {
     entries_to_unset=("$@")
   fi
 
-  local entry varlist v
+  local entry varlist v any_unset=false
   for entry in "${entries_to_unset[@]}"; do
     if [[ -z "${_PASSENV_TRACKER[$entry]+x}" ]]; then
       printf 'passenv: %s is not currently loaded\n' "$entry" >&2
@@ -330,7 +358,10 @@ _passenv_unset() {
     unset "_PASSENV_TRACKER[$entry]"
 
     printf 'passenv: unset %s → %s\n' "$entry" "$varlist"
+    any_unset=true
   done
+
+  [[ "$any_unset" == true ]] || return 1
 }
 
 # List all .env entries available in the password store.
@@ -360,7 +391,7 @@ _passenv_list() {
 #   0 always
 _passenv_loaded() {
   if [[ ${#_PASSENV_TRACKER[@]} -eq 0 ]]; then
-    printf 'passenv: no entries are currently loaded\n'
+    printf 'passenv: no entries are currently loaded\n' >&2
     return 0
   fi
 
@@ -380,11 +411,13 @@ _passenv_help() {
 Usage: passenv <subcommand> [ENTRY]
 
 Subcommands:
-  set    [ENTRY ...]            Decrypt a pass entry and load its vars into the
+  set    [--force] [ENTRY ...]  Decrypt a pass entry and load its vars into the
                                 current shell. If ENTRY is omitted, an fzf picker
-                                is launched.
+                                is launched. Use --force to reload an already-loaded
+                                entry without being skipped.
                                 Example:  passenv set os/prod.env
                                           passenv set os/prod.env api/openai.env
+                                          passenv set --force os/prod.env
 
   unset  [ENTRY ...]            Unset the vars loaded from ENTRY in the current
                                 shell. If ENTRY is omitted, an fzf picker is shown
