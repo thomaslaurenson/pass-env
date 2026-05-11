@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 
 # Print an error message to stderr and exit with status 1.
 #
