@@ -24,3 +24,17 @@ jobs:
 
       - name: Run linter
         run: make lint
+
+      - name: Check version consistency
+        run: |
+          src_version="$(grep -m1 '^VERSION=' src/env.bash | sed -E 's/VERSION="(.*)"/\1/')"
+          man_version="$(grep -m1 '\.TH pass-env' man/pass-env.1 | awk '{print $4}' | tr -d '"')"
+          if [[ "$man_version" != "$src_version" ]]; then
+            echo "ERROR: man page version ($man_version) does not match src/env.bash ($src_version)"
+            exit 1
+          fi
+          changelog_version="$(grep -m1 '^## ' CHANGELOG.md | awk '{print $2}')"
+          if [[ "$changelog_version" != "$src_version" ]]; then
+            echo "ERROR: CHANGELOG.md version ($changelog_version) does not match src/env.bash ($src_version)"
+            exit 1
+          fi

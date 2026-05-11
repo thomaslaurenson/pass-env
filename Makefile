@@ -58,12 +58,7 @@ bump-bats:
 
 test:
 	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
-
-release:
-	$(eval TAG := v$(shell sed -n 's/^VERSION="\(.*\)"/\1/p' src/env.bash))
-	@[ -n "$(TAG)" ] || { printf 'release: could not read VERSION from src/env.bash\n'; exit 1; }
-	@printf 'Tagging release %s\n' '$(TAG)'
-	@git diff --quiet && git diff --cached --quiet \
-	  || { printf 'release: working tree is dirty — commit or stash first\n'; exit 1; }
-	git tag -a '$(TAG)' -m 'Release $(TAG)'
-	git push origin '$(TAG)'
+	@printf 'zsh integration  contrib/pass-env-init.sh ... '
+	@zsh test/zsh_integration.zsh \
+	  && printf 'ok\n' \
+	  || { printf 'fail\n'; exit 1; }
