@@ -11,8 +11,6 @@ set -euo pipefail
 
 VERSION="0.2.1"
 
-PASS_CMD="${PASS_CMD:-pass}"  # in case we need to call back into pass
-
 # Print an error message to stderr and exit with status 1.
 #
 # Arguments:
@@ -41,7 +39,7 @@ die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
 _fzf_select_entry() {
     local query="${1:-}"
     if ! command -v fzf &>/dev/null; then
-        die "--entry PATH is required (fzf not installed for interactive selection)"
+        die "ENTRY is required (fzf not installed for interactive selection)"
     fi
     local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
     local fzf_args=(
@@ -53,6 +51,8 @@ _fzf_select_entry() {
         --header="ENTER: select one  |  TAB+ENTER: select multiple  |  ESC: cancel"
     )
     [[ -n "$query" ]] && fzf_args+=("--query=$query")
+    [[ -d "$password_store_dir" ]] \
+      || die "password store not found: $password_store_dir (has pass been initialized?)"
     find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
         | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
         | sed 's/\.gpg$//' \
@@ -91,10 +91,10 @@ _resolve_entry() {
             printf '%s\n' "$candidate"
             return
         fi
-        printf 'pass env: entry not found: %s\n' "$candidate" >&2
+        die "entry not found: $candidate"
     fi
     local selected
-    selected="$(_fzf_select_entry "$candidate")"
+    selected="$(_fzf_select_entry "")"
     [ -n "$selected" ] || die "No entry selected."
     printf '%s\n' "$selected"
 }
@@ -162,6 +162,8 @@ version() {
 #   0 always
 list_entries() {
   local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  [[ -d "$password_store_dir" ]] \
+    || die "password store not found: $password_store_dir (has pass been initialized?)"
   find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
     | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
     | sed 's/\.gpg$//' \
@@ -186,7 +188,7 @@ list_entries() {
 #   exits 1 on decryption failure, invalid key name, or unsupported line format
 _parse_entry() {
   local entry="$1" content key val
-  content="$("$PASS_CMD" show -- "$entry")" || die "unable to show entry: $entry"
+  content="$(pass show -- "$entry")" || die "unable to show entry: $entry"
   while IFS= read -r line; do
     line="${line%$'\r'}"   # strip trailing CR — handles CRLF files transparently
     [ -z "$line" ] && continue
@@ -196,9 +198,27 @@ _parse_entry() {
       [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in $entry: $key"
       printf '%s=%q\n' "$key" "$val"
     else
-      die "unsupported line format in $entry (expected KEY=VALUE)"
+      die "unsupported line format in $entry (expected KEY=VALUE; note: multiline values are not supported)"
     fi
   done <<< "$content"
+}
+
+# Export all variables from a pass entry directly into the current (sub)shell.
+#
+# Parses the entry via _parse_entry and calls 'export KEY=VALUE' for each line
+# without eval, eliminating the risk of shell code execution from entry content.
+# Used by _run_with_env; _set_env is used by the set subcommand for eval output.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+# Returns:
+#   0 on success, exits 1 on any error (see _parse_entry)
+_export_entry() {
+  local line
+  while IFS= read -r line; do
+    # shellcheck disable=SC2163  # $line is KEY=VALUE from _parse_entry, not a var name
+    export "$line"
+  done < <(_parse_entry "$1")
 }
 
 # Execute a command with environment variables from one or more pass entries.
@@ -224,7 +244,7 @@ _run_with_env() {
   [ "$#" -ge 1 ] || die "run: missing COMMAND"
   (
     for e in "${entries[@]}"; do
-      eval "$(_set_env "$e")"
+      _export_entry "$e"
     done
     exec "$@"
   )
@@ -263,9 +283,7 @@ _unset_env() {
     keys+=("${line%%=*}")
   done < <(_parse_entry "$1")
   if [ ${#keys[@]} -gt 0 ]; then
-    local k stmt="unset"
-    for k in "${keys[@]}"; do stmt+=' '"$k"; done
-    printf '%s\n' "$stmt"
+    printf 'unset %s\n' "${keys[@]}"
   fi
 }
 
@@ -277,22 +295,10 @@ case "$cmd" in
   list) list_entries ;;
   run)
     raw_entries=()
-    saw_dashdash=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --entry) raw_entries+=("${2:-}"); shift 2 ;;
-        --) shift; saw_dashdash=1; break ;;
-        *) break ;;
-      esac
+    while [ $# -gt 0 ] && [ "${1}" != "--" ]; do
+      raw_entries+=("$1"); shift
     done
-    # Collect all positional entries (everything up to --) when the explicit
-    # -- separator was not the first token consumed.
-    if [ "$saw_dashdash" -eq 0 ]; then
-      while [ $# -gt 0 ] && [ "${1}" != "--" ]; do
-        raw_entries+=("$1"); shift
-      done
-      [ "${1:-}" = "--" ] && shift
-    fi
+    [ "${1:-}" = "--" ] && shift
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       entries=()
       resolved="$(_resolve_entry "")" || exit 1
@@ -308,13 +314,10 @@ case "$cmd" in
     ;;
   set)
     raw_entries=()
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --entry) raw_entries+=("${2:-}"); shift 2 ;;
-        --) shift; break ;;
-        *)  raw_entries+=("$1"); shift ;;
-      esac
+    while [ $# -gt 0 ] && [ "${1}" != "--" ]; do
+      raw_entries+=("$1"); shift
     done
+    [ "${1:-}" = "--" ] && shift
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       resolved="$(_resolve_entry "")" || exit 1
       while IFS= read -r e; do _set_env "$e"; done <<< "$resolved"
@@ -327,13 +330,10 @@ case "$cmd" in
     ;;
   unset)
     raw_entries=()
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --entry) raw_entries+=("${2:-}"); shift 2 ;;
-        --) shift; break ;;
-        *)  raw_entries+=("$1"); shift ;;
-      esac
+    while [ $# -gt 0 ] && [ "${1}" != "--" ]; do
+      raw_entries+=("$1"); shift
     done
+    [ "${1:-}" = "--" ] && shift
     if [ "${#raw_entries[@]}" -eq 0 ]; then
       resolved="$(_resolve_entry "")" || exit 1
       while IFS= read -r e; do _unset_env "$e"; done <<< "$resolved"
