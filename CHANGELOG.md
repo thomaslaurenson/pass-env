@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 - 2026-05-11
+
+### Added
+
+- Better error messages in pass env extension
+- zsh integration test locally and in actions
+
+### Fixed
+
+- Removed eval for exporting vars
+- Removed `PASS_CMD` usage
+- Uninstaller script sentinel string detection
+
+### Updated
+
+- Man page
+
 ## 0.2.1 - 2026-04-08
 
 ### Added

@@ -15,10 +15,17 @@ jobs:
 
       - name: Install bash (macOS — system bash 3.2 is too old for bats)
         if: runner.os == 'macOS'
-        run: brew install bash
+        run: brew install bash zsh
+
+      - name: Install zsh (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y zsh
 
       - name: Print bash version
         run: bash --version
 
       - name: Run tests
         run: make test
+
+      - name: Run zsh integration test
+        run: zsh test/zsh_integration.zsh

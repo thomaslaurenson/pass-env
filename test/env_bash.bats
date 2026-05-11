@@ -15,14 +15,16 @@ bats_require_minimum_version 1.7.0
 #
 # Globals:
 #   BATS_TEST_DIRNAME - provided by bats
-#   PASSWORD_STORE_DIR, PASS_CMD, PASSENV_FIXTURE_CONTENT_DIR - exported
+#   PASSWORD_STORE_DIR, PASSENV_FIXTURE_CONTENT_DIR - exported
 #   ENV_BASH - set
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
-  export PASS_CMD="$REPO_ROOT/test/helpers/mock_pass"
   export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
   ENV_BASH="$REPO_ROOT/src/env.bash"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  ln -sf "$REPO_ROOT/test/helpers/mock_pass" "$BATS_TEST_TMPDIR/bin/pass"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
 # Dispatcher
