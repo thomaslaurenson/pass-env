@@ -29,7 +29,7 @@ setup() {
   source "$REPO_ROOT/contrib/pass-env-init.sh"
 }
 
-# passenv set — loading entries into the shell
+# passenv set: loading entries into the shell
 
 @test "set: exports the entry's variables into the current shell" {
   passenv set "myentry.env"
@@ -57,7 +57,7 @@ setup() {
   [[ -n "${_PASSENV_TRACKER[second.env]:-}" ]]
 }
 
-# passenv unset — removing entries from the shell
+# passenv unset: removing entries from the shell
 
 @test "unset: removes the entry's variables from the shell" {
   passenv set "myentry.env"
@@ -92,7 +92,7 @@ setup() {
   [[ "$output" =~ "no entries" ]]
 }
 
-# passenv run — subprocess injection and isolation
+# passenv run: subprocess injection and isolation
 
 @test "run: injects entry vars into the subprocess" {
   run passenv run "myentry.env" -- printenv MY_VAR
@@ -116,7 +116,7 @@ setup() {
   [ "$status" -eq 42 ]
 }
 
-# passenv list — store entry listing
+# passenv list: store entry listing
 
 @test "list: exits 0 and lists available store entries" {
   run passenv list
@@ -131,7 +131,7 @@ setup() {
   ! [[ "$output" =~ ".gpg" ]]
 }
 
-# passenv loaded — tracker state display
+# passenv loaded: tracker state display
 
 @test "loaded: shows all currently loaded entries" {
   passenv set "myentry.env" "second.env"
@@ -154,7 +154,7 @@ setup() {
   [[ "$output" =~ "no entries" ]]
 }
 
-# Loader guard — re-sourcing does not clear the tracker
+# Loader guard: re-sourcing does not clear the tracker
 
 @test "re-sourcing the loader does not reset a populated tracker" {
   passenv set "myentry.env"
