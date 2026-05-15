@@ -64,8 +64,8 @@ test: ## Run bats test suite and zsh integration test
 
 .PHONY: check_version
 check_version: ## Verify versions in src/env.bash, man page, and CHANGELOG.md are consistent
-	@src="$$(grep -oP 'VERSION="\K[0-9]+\.[0-9]+\.[0-9]+' src/env.bash)"; \
-	man="$$(grep -oP '"Version \K[0-9]+\.[0-9]+\.[0-9]+' man/pass-env.1)"; \
+	@src="$$(sed -n 's/.*VERSION="\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' src/env.bash)"; \
+	man="$$(sed -n 's/.*"Version \([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' man/pass-env.1)"; \
 	log="$$(grep -m1 '^## ' CHANGELOG.md | awk '{print $$2}')"; \
 	ok=1; \
 	if [[ "$$man" != "$$src" ]]; then \
@@ -82,7 +82,7 @@ ci: lint check_version test ## Run all CI checks locally
 # GET
 .PHONY: get_version
 get_version: ## Print the project version from src/env.bash
-	@grep -oP 'VERSION="\K[0-9]+\.[0-9]+\.[0-9]+' src/env.bash
+	@grep -oE 'VERSION="[0-9]+\.[0-9]+\.[0-9]+"' src/env.bash | sed 's/VERSION="//;s/"//'
 
 .PHONY: get_changelog_entry
 get_changelog_entry: ## Print release notes for TAG to stdout (override with TAG=v1.0.0)
@@ -107,7 +107,7 @@ get_changelog_entry: ## Print release notes for TAG to stdout (override with TAG
 
 .PHONY: check_version_tag
 check_version_tag: ## Verify src/env.bash VERSION matches TAG (e.g. make check_version_tag TAG=v1.0.0)
-	@src="$$(grep -oP 'VERSION="\K[0-9]+\.[0-9]+\.[0-9]+' src/env.bash)"; \
+	@src="$$(sed -n 's/.*VERSION="\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' src/env.bash)"; \
 	tag="$(TAG)"; tag="$${tag#v}"; \
 	if [[ "$$src" != "$$tag" ]]; then \
 	  printf 'check_version_tag: src/env.bash (%s) does not match tag (%s)\n' "$$src" "$(TAG)" >&2; \
