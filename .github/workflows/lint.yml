@@ -2,11 +2,14 @@ name: Lint
 
 on: workflow_call
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -26,15 +29,4 @@ jobs:
         run: make lint
 
       - name: Check version consistency
-        run: |
-          src_version="$(grep -m1 '^VERSION=' src/env.bash | sed -E 's/VERSION="(.*)"/\1/')"
-          man_version="$(grep -m1 '\.TH pass-env' man/pass-env.1 | awk '{print $8}' | tr -d '"')"
-          if [[ "$man_version" != "$src_version" ]]; then
-            echo "ERROR: man page version ($man_version) does not match src/env.bash ($src_version)"
-            exit 1
-          fi
-          changelog_version="$(grep -m1 '^## ' CHANGELOG.md | awk '{print $2}')"
-          if [[ "$changelog_version" != "$src_version" ]]; then
-            echo "ERROR: CHANGELOG.md version ($changelog_version) does not match src/env.bash ($src_version)"
-            exit 1
-          fi
+        run: make check_version

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.3 - 2026-05-15
+
+### Fixed
+
+- Fix export of env vars with special characters in run subcommand
+
+### Updated
+
+- Many style changes to bash codebase
+- Makefile restructured to follow project conventions
+
 ## 0.2.2 - 2026-05-11
 
 ### Added

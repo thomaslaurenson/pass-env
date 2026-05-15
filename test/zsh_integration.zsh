@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
 export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
 
-# Put mock_pass on PATH as 'pass' — same pattern as bats setup().
+# Put mock_pass on PATH as 'pass', same pattern as bats setup().
 tmpbin="$(mktemp -d)"
 trap 'rm -rf "$tmpbin"' EXIT INT TERM
 ln -sf "$REPO_ROOT/test/helpers/mock_pass" "$tmpbin/pass"

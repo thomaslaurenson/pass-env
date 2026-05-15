@@ -13,10 +13,10 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly NC='\033[0m'
 
 # Print an info message to stdout.
 #
@@ -149,13 +149,13 @@ maybe_rm() {
 # Remove a directory only when it exists and is empty.
 #
 # Uses sudo when the parent directory is not user-writable. Prints
-# [kept — not empty] when the directory exists but has other contents
+# [kept, not empty] when the directory exists but has other contents
 # (e.g. extensions installed by other tools).
 #
 # Arguments:
 #   $1 - Directory path to remove
 # Outputs:
-#   stdout: red [dir removed] when deleted; yellow [kept — not empty] when skipped
+#   stdout: red [dir removed] when deleted; yellow [kept, not empty] when skipped
 # Returns:
 #   0 always
 maybe_rmdir() {
@@ -172,7 +172,7 @@ maybe_rmdir() {
   if [[ "$removed" == true ]]; then
     printf "  ${RED}-${NC} %s  ${RED}[dir removed]${NC}\n" "$dir"
   else
-    printf "  ${YELLOW}-${NC} %s  ${YELLOW}[kept — not empty]${NC}\n" "$dir"
+    printf "  ${YELLOW}-${NC} %s  ${YELLOW}[kept, not empty]${NC}\n" "$dir"
   fi
 }
 
@@ -200,12 +200,12 @@ portable_sed_inplace() {
 }
 
 # Sentinel strings used to locate the injected RC block.
-RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
-RC_SENTINEL_END="# pass-env-init END"
+readonly RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
+readonly RC_SENTINEL_END="# pass-env-init END"
 
 # Sentinel strings used to locate the injected extensions export block.
-EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
-EXT_SENTINEL_END="# pass-env-extensions END"
+readonly EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
+readonly EXT_SENTINEL_END="# pass-env-extensions END"
 
 # Remove a guarded block from a shell RC file.
 #
@@ -243,7 +243,7 @@ strip_rc_block() {
   fi
 
   if ! grep -qF "$sentinel_end" "$rc_file"; then
-    printf 'passenv: END sentinel missing in %s — manual cleanup required\n' "$rc_file" >&2
+    printf 'passenv: END sentinel missing in %s, manual cleanup required\n' "$rc_file" >&2
     return 1
   fi
 

@@ -40,7 +40,7 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-# list — store entry listing
+# list: store entry listing
 
 @test "list: exits 0" {
   run bash "$ENV_BASH" list
@@ -108,7 +108,7 @@ setup() {
   [[ "$output" =~ "no traversal allowed" ]]
 }
 
-# set — output format and eval round-trip
+# set: output format and eval round-trip
 
 @test "set: emits export lines for a valid entry" {
   run bash "$ENV_BASH" set myentry.env
@@ -131,6 +131,21 @@ setup() {
   eval "$output"
   [[ "$SPECIAL_VAR" == "hello world" ]]
   [[ "$QUOTE_VAR" == "it's a test" ]]
+  [[ "$BANG_VAR" == '!d+f$bn' ]]
+  [[ "$DOLLAR_VAR" == 'price$100' ]]
+  [[ "$HASH_VAR" == 'color#ffffff' ]]
+}
+
+@test "run: injects entry with bang, dollar, and hash chars into subprocess" {
+  run bash "$ENV_BASH" run specialchars.env -- printenv BANG_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == '!d+f$bn' ]]
+}
+
+@test "run: injects entry with dollar sign in value into subprocess" {
+  run bash "$ENV_BASH" run specialchars.env -- printenv DOLLAR_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == 'price$100' ]]
 }
 
 @test "set: rejects an entry that contains an invalid variable name" {
@@ -145,7 +160,7 @@ setup() {
   [[ "$MY_OTHER" == "othervalue" ]]
 }
 
-# unset — output format and eval round-trip
+# unset: output format and eval round-trip
 
 @test "unset: emits an unset statement listing all key names" {
   run bash "$ENV_BASH" unset myentry.env
@@ -162,7 +177,7 @@ setup() {
   [[ -z "${MY_VAR:-}" ]]
 }
 
-# run — subprocess injection and isolation
+# run: subprocess injection and isolation
 
 @test "run: injects entry vars into the subprocess" {
   run bash "$ENV_BASH" run myentry.env -- printenv MY_VAR

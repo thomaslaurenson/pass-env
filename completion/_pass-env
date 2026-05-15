@@ -1,7 +1,7 @@
 #compdef -P pass\ env*
 # Zsh completion for the `pass env` extension
 #
-# Installation — add the completion/ directory to your fpath BEFORE compinit:
+# Installation: add the completion/ directory to your fpath BEFORE compinit:
 #
 #   # ~/.zshrc
 #   fpath=(/path/to/pass-env/completion $fpath)
@@ -75,7 +75,7 @@ _pass_env() {
       case $words[1] in
         run)
           # Detect whether -- has already been supplied.
-          # Everything after -- is the command to run — delegate completion to it.
+          # Everything after -- is the command to run; delegate completion to it.
           local ddash_idx=0 i
           for (( i = 2; i <= $#words; i++ )); do
             if [[ "${words[$i]}" == '--' ]]; then
@@ -173,7 +173,7 @@ _passenv() {
 
         run)
           # Detect whether -- has already been supplied.
-          # Everything after -- is the command to run — delegate completion to it.
+          # Everything after -- is the command to run; delegate completion to it.
           local ddash_idx=0 i
           for (( i = 2; i <= $#words; i++ )); do
             if [[ "${words[$i]}" == '--' ]]; then

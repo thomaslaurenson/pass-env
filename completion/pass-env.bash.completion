@@ -1,9 +1,9 @@
 # bash completion for the `pass env` extension and `passenv` shell function.
 #
 # The file covers two independent surfaces:
-#   1. `pass env` — hooked via the PASSWORD_STORE_EXTENSION_COMMANDS mechanism
+#   1. `pass env`, hooked via the PASSWORD_STORE_EXTENSION_COMMANDS mechanism
 #      (requires pass's own bash completion to be loaded first).
-#   2. `passenv` — registered directly with `complete -F __passenv passenv`
+#   2. `passenv`, registered directly with `complete -F __passenv passenv`
 #      and works regardless of pass's completion state.
 #
 # Installation: place (or symlink) this file somewhere sourced by bash-completion,
@@ -44,7 +44,8 @@ __pass_env_list_entries() {
 __pass_env_complete_entries() {
   local cur="$1"
   local IFS=$'\n'
-  local all=( $(__pass_env_list_entries) )
+  local -a all
+  all=( $(__pass_env_list_entries) )
   # Disable filename path-stripping: pass is registered with `complete -o filenames`
   # which causes bash to strip directory components from COMPREPLY entries.
   # compopt +o filenames overrides that for this completion so full paths like
