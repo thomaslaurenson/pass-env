@@ -56,6 +56,17 @@ There are a selection of other install options, including:
 - `--no-init`: Do not install shell initialization helps
 - `--no-uninstall`: Do not install pass env uninstaller
 
+## Pass Entry Example
+
+- Key value pairs, like a normal .env file
+- Always has .env extension
+
+```sh
+$ pass show env/test.env 
+USERNAME=admin
+PASSWORD=!d+f$bn
+```
+
 ## Two Ways to Use `pass-env`
 
 `pass env` is the raw pass extension. It emits `export KEY=VALUE` lines to stdout — but because a subprocess cannot modify its parent's environment, those lines must be `eval`'d by the caller to have any effect in the current shell.
