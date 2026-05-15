@@ -1,0 +1,27 @@
+name: Pull Request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/**"
+      - "Makefile"
+      - "src/**"
+      - "test/**"
+      - "contrib/**"
+      - "completion/**"
+      - "scripts/**"
+      - "man/**"
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+  test:
+    uses: ./.github/workflows/test.yml

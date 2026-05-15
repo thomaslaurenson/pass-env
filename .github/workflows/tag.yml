@@ -1,9 +1,12 @@
-name: Tag
+name: Tag and Release
 
 on:
   push:
     tags:
       - "v*.*.*"
+
+permissions:
+  contents: write
 
 jobs:
   lint:
@@ -14,5 +17,3 @@ jobs:
     needs: [lint, test]
     uses: ./.github/workflows/release.yml
     secrets: inherit
-    permissions:
-      contents: write

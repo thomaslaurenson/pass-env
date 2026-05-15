@@ -1,0 +1,28 @@
+name: Main
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - ".github/workflows/**"
+      - "Makefile"
+      - "src/**"
+      - "test/**"
+      - "contrib/**"
+      - "completion/**"
+      - "scripts/**"
+      - "man/**"
+
+concurrency:
+  group: prerelease
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+  test:
+    uses: ./.github/workflows/test.yml
