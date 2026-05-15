@@ -59,7 +59,7 @@ _passenv_keys() {
 # Word-split $1 intentionally to print one word per line.
 # This avoids the read -a (bash) vs read -A (zsh) incompatibility.
 # Safety: this function is only called with $varlist, whose words are variable
-# names validated against ^[A-Za-z_][A-Za-z0-9_]*$ — that character class
+# names validated against ^[A-Za-z_][A-Za-z0-9_]*$; that character class
 # excludes all IFS characters (space, tab, newline), so word-splitting on $1
 # is safe and produces exactly one name per line.
 #
@@ -73,7 +73,7 @@ _passenv_split_words() {
   if [[ -n "${ZSH_VERSION:-}" ]]; then
     # In zsh, unquoted $1 does not word-split by default; ${=1} enables it.
     # Safety contract: callers must only pass variable names validated against
-    # ^[A-Za-z_][A-Za-z0-9_]*$ — that character class excludes all IFS chars,
+    # ^[A-Za-z_][A-Za-z0-9_]*$; that character class excludes all IFS chars,
     # making word-splitting safe and deterministic. Never call with arbitrary input.
     # shellcheck disable=SC2086,SC2296
     printf '%s\n' ${=1}
@@ -130,7 +130,7 @@ _passenv_version() {
 # Execute a command with environment variables from one or more pass entries.
 #
 # Thin wrapper around 'pass env run'. Entries are decrypted and the command
-# is executed in a subshell — nothing leaks into the calling shell. Supports
+# is executed in a subshell; nothing leaks into the calling shell. Supports
 # the same argument syntax as the pass extension: ENTRY [ENTRY ...] -- CMD.
 # If no ENTRY is given before --, an interactive fzf picker is launched.
 #
@@ -197,7 +197,7 @@ _passenv_set() {
 # Environment:
 #   _PASSENV_TRACKER - associative array updated with the loaded var names
 # Outputs:
-#   stdout: 'passenv: loaded ENTRY → VAR1 VAR2 ...' confirmation line
+#   stdout: 'passenv: loaded ENTRY -> VAR1 VAR2 ...' confirmation line
 #   stderr: error messages on failure
 # Returns:
 #   0 on success
@@ -226,7 +226,7 @@ _passenv_load_one() {
     return 1
   fi
 
-  # Extract var names using awk — avoids BASH_REMATCH which is not portable
+  # Extract var names using awk, avoids BASH_REMATCH which is not portable
   # to zsh's =~ operator.
   local varlist
   varlist="$(printf '%s\n' "$output" \
@@ -245,7 +245,7 @@ _passenv_load_one() {
   fi
 
   # Strip any non-export lines (e.g. stray blank lines or debug output).
-  # NOTE: this grep validates the key name only — it does NOT constrain values.
+  # NOTE: this grep validates the key name only; it does NOT constrain values.
   # Protection against value-level injection comes entirely from printf %q in
   # _parse_entry (env.bash). Both layers are required; neither is sufficient alone.
   local safe_output
@@ -263,7 +263,7 @@ _passenv_load_one() {
   fi
   _PASSENV_TRACKER[$entry]="$merged"
 
-  printf 'passenv: loaded %s → %s\n' "$entry" "$merged"
+  printf 'passenv: loaded %s -> %s\n' "$entry" "$merged"
 }
 
 # Unset variables for one or more loaded entries and remove them from the tracker.
@@ -277,7 +277,7 @@ _passenv_load_one() {
 # Environment:
 #   _PASSENV_TRACKER - associative array; matched entries are removed
 # Outputs:
-#   stdout: 'passenv: unset ENTRY → VAR1 VAR2 ...' for each unset entry
+#   stdout: 'passenv: unset ENTRY -> VAR1 VAR2 ...' for each unset entry
 #   stderr: warning if a named entry is not currently loaded
 # Returns:
 #   0 always (errors for individual entries are non-fatal)
@@ -357,7 +357,7 @@ _passenv_unset() {
     # Remove the entry from the tracker.
     unset "_PASSENV_TRACKER[$entry]"
 
-    printf 'passenv: unset %s → %s\n' "$entry" "$varlist"
+    printf 'passenv: unset %s -> %s\n' "$entry" "$varlist"
     any_unset=true
   done
 
@@ -385,7 +385,7 @@ _passenv_list() {
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
 # Outputs:
-#   stdout: one 'passenv: ENTRY → VARS' line per loaded entry, or a
+#   stdout: one 'passenv: ENTRY -> VARS' line per loaded entry, or a
 #           'no entries' message if the tracker is empty
 # Returns:
 #   0 always
@@ -396,7 +396,7 @@ _passenv_loaded() {
   fi
 
   _passenv_keys | while IFS= read -r k; do
-    printf 'passenv: %s → %s\n' "$k" "${_PASSENV_TRACKER[$k]}"
+    printf 'passenv: %s -> %s\n' "$k" "${_PASSENV_TRACKER[$k]}"
   done
 }
 
@@ -425,7 +425,7 @@ Subcommands:
                                 Example:  passenv unset os/prod.env
 
   run    [ENTRY ...] -- CMD     Decrypt one or more entries and run CMD with those
-                                vars in its environment only — nothing leaks into
+                                vars in its environment only; nothing leaks into
                                 the current shell. If ENTRY is omitted, an fzf
                                 picker is launched.
                                 Example:  passenv run os/prod.env -- printenv MY_VAR
