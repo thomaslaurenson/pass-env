@@ -23,7 +23,7 @@ jobs:
           sed -i 's/^VERSION=.*/VERSION="${{ github.ref_name }}"/' install.sh
 
       - name: Extract release notes
-        run: make get_changelog_entry TAG=${{ github.ref_name }} > /tmp/release-notes.md
+        run: make get_changelog TAG=${{ github.ref_name }} > /tmp/release-notes.md
 
       - name: Generate checksums
         run: sha256sum "pass-env-${{ github.ref_name }}.tar.gz" install.sh > checksums.txt

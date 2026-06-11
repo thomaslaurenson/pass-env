@@ -1,5 +1,9 @@
 # pass-env
 
+![Build Status](https://img.shields.io/github/actions/workflow/status/thomaslaurenson/pass-env/tag.yml?style=flat&logo=github) ![Test Status](https://img.shields.io/github/actions/workflow/status/thomaslaurenson/pass-env/tag.yml?style=flat&label=test&logo=github)
+
+![Release Version](https://img.shields.io/github/v/release/thomaslaurenson/pass-env?style=flat&logo=github) ![Release downloads](https://img.shields.io/github/downloads/thomaslaurenson/pass-env/total?label=downloads&logo=github)
+
 A [pass](https://www.passwordstore.org/) extension that decrypts `.env` files from the password store and exports their contents as environment variables.
 
 ## Requirements
@@ -37,6 +41,8 @@ bash /tmp/pass-env-install.sh
 
 ### Quick Install
 
+For a system wide install (needs `sudo`):
+
 ```sh
 curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash -s -- --yes
 ```
@@ -51,15 +57,17 @@ curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/
 
 There are a selection of other install options, including:
 
+- `--yes`: Skip confirmation
 - `--no-completion`: Do not install bash/zsh shell completion
 - `--no-man`: Do not install manual page
-- `--no-init`: Do not install shell initialization helps
+- `--no-init`: Do not install shell initialization helper scripts
 - `--no-uninstall`: Do not install pass env uninstaller
+- `--dry-run`: Show what operations would be done
 
 ## Pass Entry Example
 
-- Key value pairs, like a normal .env file
-- Always has .env extension
+- Key value pairs, like a normal `.env` file
+- Always has `.env` extension
 
 ```sh
 $ pass show env/test.env 
@@ -67,62 +75,67 @@ USERNAME=admin
 PASSWORD=!d+f$bn
 ```
 
+> **Note:** Values cannot span multiple lines. Newlines within values are not supported. Each line must be a complete `KEY=VALUE` pair.
+
 ## Two Ways to Use `pass-env`
 
-`pass env` is the raw pass extension. It emits `export KEY=VALUE` lines to stdout — but because a subprocess cannot modify its parent's environment, those lines must be `eval`'d by the caller to have any effect in the current shell.
+### Raw pass env extension
 
-`passenv` is the shell function from `contrib/pass-env-init.sh` that handles the `eval` for you and tracks loaded entries in `_PASSENV_TRACKER`. It is installed and sourced into your RC files by default. **Use `passenv` for all interactive shell work.**
+`pass env` (with a space) is the raw pass extension. It emits `export KEY=VALUE` lines to stdout, which makes it useful when "piping to another command". Rule of thumb: **Use `pass env run` for non-interative shell work.**
 
-The one exception where the raw extension is sufficient without shell integration is `pass env run`: it injects decrypted variables into a subprocess environment directly, so no `eval` is required and nothing leaks into the calling shell.
-
-1. Use `set` subcommand to export to current shell
+Export OpenStack creds from openstack.env and run "openstack" command in subshell:
 
 ```sh
-# set one entry
-$ passenv set api/openai.env
-passenv: loaded api/openai.env → OPENAI_API_KEY
+pass env run openstack.env -- openstack server list
+```
 
-# set multiple entries
-$ passenv set api/openai.env db/prod.env
-passenv: loaded api/openai.env → OPENAI_API_KEY
+Export OpenStack and Tenable creds and run custom Python script in subshell:
+
+```sh
+pass env run openstack.env tenable.env -- python3 check_vulns.py
+```
+
+### Passenv wrapper
+
+In Linux a subprocess cannot modify its parent's environment, so the raw `pass env` extension is limited when performing interative work. For example, setting (exporting) variables in the current shell and persisting them. Therefore, the `passenv` wrapper is provided to execute `pass env` and `eval` to persist in current shell. `passenv` is the shell function from `contrib/pass-env-init.sh` that handles the `eval` for you and tracks loaded entries in `_PASSENV_TRACKER`. It is installed and sourced into your RC files by default. Rule of thumb: **Use `passenv` for all interactive shell work.**.
+
+Use `set` subcommand to export to current shell:
+
+```sh
+passenv set openstack.env
+passenv: loaded openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CREDENTIAL_SECRET
+```
+
+Use `set` subcommand to export two sets of variables to the current shell:
+
+```sh
+passenv set openstack.env db/prod.env
+passenv: loaded openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CREDENTIAL_SECRET
 passenv: loaded db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 ```
 
-2. List all entries that `set` in the current shell
+List all entries that `set` in the current shell:
 
 ```sh
-$ passenv loaded
-passenv: api/openai.env → OPENAI_API_KEY
+passenv loaded
+passenv: loaded openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CREDENTIAL_SECRET
 passenv: db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 ```
 
-3. Use `unset` subcommand to remove a single entry's vars
+Use `unset` subcommand to remove vars from a single entry:
 
 ```sh
-# unset one entry
-$ passenv unset api/openai.env
-passenv: unset api/openai.env → OPENAI_API_KEY
+passenv unset openstack.env
+passenv: unset openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CREDENTIAL_SECRET
+```
 
-# unset multiple entries
-$ passenv unset api/openai.env db/prod.env
-passenv: unset api/openai.env → OPENAI_API_KEY
+Use `unset` subcommand to remove vars from multiple entries:
+
+```sh
+passenv unset openstack.env db/prod.env
+passenv: unset openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CREDENTIAL_SECRET
 passenv: unset db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 ```
-
-4. Use `run` subcommand to load env vars and spawn process in subshell
-
-```sh
-# run a command with one entry's vars injected; nothing leaks into the shell
-passenv run api/openai.env -- myapp
-
-# run a command with multiple entries; all vars are available to the subprocess
-passenv run api/openai.env db/prod.env -- myapp
-
-# Use native pass env extension without shell initialization to run
-pass env run api/openai.env db/prod.env -- myapp
-```
-
-> **Note:** Values cannot span multiple lines. Newlines within values are not supported; each line must be a complete `KEY=VALUE` pair.
 
 See `man pass-env` for full documentation.
 
@@ -130,11 +143,11 @@ See `man pass-env` for full documentation.
 
 ### Eval Trust Boundary
 
-`passenv set` and `eval "$(pass env set ...)"` execute the decrypted entry content as shell code. If an attacker can write to an entry in your password store — via a compromised GPG key, a shared store, or a symlink attack — they can execute arbitrary commands in your shell the next time you load that entry.
+`passenv set` and `eval "$(pass env set ...)"` execute the decrypted entry content as shell code. If an attacker can write to an entry in your password store, via a compromised GPG key, a shared store, or a symlink attack - they can execute arbitrary commands in your shell the next time you load that entry.
 
 The security of `passenv set` is bounded by the security of your GPG key and password store. It is not stronger than that.
 
-If you need to run a single command with secrets and want to avoid the eval trust boundary entirely, use `pass env run` — it never evals entry content into a shell.
+If you need to run a single command with secrets and want to avoid the eval trust boundary entirely, use `pass env run`, it never evals entry content into a shell.
 
 ### Session-Local Tracker
 

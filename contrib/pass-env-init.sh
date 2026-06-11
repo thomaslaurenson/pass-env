@@ -23,7 +23,7 @@ if [[ -z "${ZSH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
 fi
 
 # Initialise the tracking associative array exactly once per session.
-# The guard prevents re-initialisation if the file is sourced more than once.
+# The guard prevents re-initialisation if the file is sourced more than once
 if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
   declare -gA _PASSENV_TRACKER
 fi
@@ -103,7 +103,7 @@ passenv() {
   local subcmd="${1:-help}"
   shift || true
 
-  case "$subcmd" in
+  case "${subcmd}" in
     set)     _passenv_set   "$@" ;;
     unset)   _passenv_unset "$@" ;;
     run)     _passenv_run   "$@" ;;
@@ -111,7 +111,7 @@ passenv() {
     loaded)  _passenv_loaded      ;;
     version|-v|--version) _passenv_version ;;
     help|-h|--help) _passenv_help ;;
-    *) printf 'passenv: unknown subcommand: %s\n' "$subcmd" >&2
+    *) printf 'passenv: unknown subcommand: %s\n' "${subcmd}" >&2
        _passenv_help >&2
        return 1 ;;
   esac
@@ -166,14 +166,14 @@ _passenv_set() {
   fi
 
   if [[ $# -eq 0 ]]; then
-    _passenv_load_one "" "$force"
+    _passenv_load_one "" "${force}"
     return
   fi
   local e
   local loaded=()
   for e in "$@"; do
-    if _passenv_load_one "$e" "$force"; then
-      loaded+=("$e")
+    if _passenv_load_one "${e}" "${force}"; then
+      loaded+=("${e}")
     else
       if [[ ${#loaded[@]} -gt 0 ]]; then
         printf 'passenv: rolling back previously loaded entries due to failure\n' >&2
@@ -206,22 +206,22 @@ _passenv_load_one() {
   local entry="${1:-}"
   local force="${2:-false}"
 
-  if [[ -n "$entry" && "$force" != true && -n "${_PASSENV_TRACKER[$entry]+x}" ]]; then
-    printf 'passenv: %s is already loaded (use --force to reload)\n' "$entry"
+  if [[ -n "${entry}" && "${force}" != true && -n "${_PASSENV_TRACKER[$entry]+x}" ]]; then
+    printf 'passenv: %s is already loaded (use --force to reload)\n' "${entry}"
     return 0
   fi
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
   # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
   local pass_args=()
-  [[ -n "$entry" ]] && pass_args=("$entry")
+  [[ -n "${entry}" ]] && pass_args=("${entry}")
   local output
   if ! output="$(pass env set "${pass_args[@]}")" ; then
     printf 'passenv: pass env set failed for: %s\n' "${entry:-<interactive>}" >&2
     return 1
   fi
 
-  if [[ -z "$output" ]]; then
+  if [[ -z "${output}" ]]; then
     printf 'passenv: pass env set returned no output\n' >&2
     return 1
   fi
@@ -229,19 +229,19 @@ _passenv_load_one() {
   # Extract var names using awk, avoids BASH_REMATCH which is not portable
   # to zsh's =~ operator.
   local varlist
-  varlist="$(printf '%s\n' "$output" \
+  varlist="$(printf '%s\n' "${output}" \
     | awk '/^export [A-Za-z_][A-Za-z0-9_]*=/ { split($2, a, "="); printf "%s ", a[1] }' \
     | sed 's/[[:space:]]*$//')"
 
-  if [[ -z "$varlist" ]]; then
+  if [[ -z "${varlist}" ]]; then
     printf 'passenv: no valid export lines found in output\n' >&2
     return 1
   fi
 
   # When no entry was given, fzf resolved it inside the extension but never
   # surfaces the chosen name. Derive a stable tracker key from the var names.
-  if [[ -z "$entry" ]]; then
-    entry="__passenv_$(printf '%s' "$varlist" | tr ' ' '_')"
+  if [[ -z "${entry}" ]]; then
+    entry="__passenv_$(printf '%s' "${varlist}" | tr ' ' '_')"
   fi
 
   # Strip any non-export lines (e.g. stray blank lines or debug output).
@@ -249,21 +249,21 @@ _passenv_load_one() {
   # Protection against value-level injection comes entirely from printf %q in
   # _parse_entry (env.bash). Both layers are required; neither is sufficient alone.
   local safe_output
-  safe_output="$(printf '%s\n' "$output" | grep -E '^export [A-Za-z_][A-Za-z0-9_]*=')"
-  eval "$safe_output"
+  safe_output="$(printf '%s\n' "${output}" | grep -E '^export [A-Za-z_][A-Za-z0-9_]*=')"
+  eval "${safe_output}"
 
   # Merge with any previously tracked vars for this entry (deduplicated).
   local existing="${_PASSENV_TRACKER[$entry]:-}"
   local merged
-  if [[ -n "$existing" ]]; then
-    merged="$(printf '%s %s' "$existing" "$varlist" \
+  if [[ -n "${existing}" ]]; then
+    merged="$(printf '%s %s' "${existing}" "${varlist}" \
       | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   else
-    merged="$varlist"
+    merged="${varlist}"
   fi
-  _PASSENV_TRACKER[$entry]="$merged"
+  _PASSENV_TRACKER[$entry]="${merged}"
 
-  printf 'passenv: loaded %s -> %s\n' "$entry" "$merged"
+  printf 'passenv: loaded %s -> %s\n' "${entry}" "${merged}"
 }
 
 # Unset variables for one or more loaded entries and remove them from the tracker.
@@ -308,21 +308,21 @@ _passenv_unset() {
     prev_term="$(trap -p TERM)"
     prev_exit="$(trap -p EXIT)"
 
-    trap 'rm -f "$tmp_preview"' INT TERM EXIT
+    trap 'rm -f "${tmp_preview}"' INT TERM EXIT
     _passenv_keys | while IFS= read -r k; do
       printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
-    done > "$tmp_preview"
+    done > "${tmp_preview}"
 
     local selected
-    selected="$(awk -F'\t' '{print $1}' "$tmp_preview" \
+    selected="$(awk -F'\t' '{print $1}' "${tmp_preview}" \
       | fzf --multi \
             --height=40% \
             --layout=reverse \
             --border \
             --prompt="Unset entry: " \
             --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-            --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "$tmp_preview")")"
-    rm -f "$tmp_preview"
+            --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "${tmp_preview}")")"
+    rm -f "${tmp_preview}"
 
     # Restore previous traps. trap -p output is eval-safe: the shell itself
     # generates it with proper quoting. The :-: default is a no-op command,
@@ -332,10 +332,10 @@ _passenv_unset() {
     eval "${prev_term:-:}"
     eval "${prev_exit:-:}"
 
-    [[ -z "$selected" ]] && { printf 'passenv: no entry selected\n'; return 0; }
+    [[ -z "${selected}" ]] && { printf 'passenv: no entry selected\n'; return 0; }
     while IFS= read -r e; do
-      entries_to_unset+=("$e")
-    done <<< "$selected"
+      entries_to_unset+=("${e}")
+    done <<< "${selected}"
   else
     entries_to_unset=("$@")
   fi
@@ -343,25 +343,23 @@ _passenv_unset() {
   local entry varlist v any_unset=false
   for entry in "${entries_to_unset[@]}"; do
     if [[ -z "${_PASSENV_TRACKER[$entry]+x}" ]]; then
-      printf 'passenv: %s is not currently loaded\n' "$entry" >&2
+      printf 'passenv: %s is not currently loaded\n' "${entry}" >&2
       continue
     fi
 
     varlist="${_PASSENV_TRACKER[$entry]}"
 
-    # Unset each tracked variable.
     while IFS= read -r v; do
-      [[ -n "$v" ]] && unset "$v"
-    done < <(_passenv_split_words "$varlist")
+      [[ -n "${v}" ]] && unset "${v}"
+    done < <(_passenv_split_words "${varlist}")
 
-    # Remove the entry from the tracker.
-    unset "_PASSENV_TRACKER[$entry]"
+    unset "_PASSENV_TRACKER[${entry}]"
 
-    printf 'passenv: unset %s -> %s\n' "$entry" "$varlist"
+    printf 'passenv: unset %s -> %s\n' "${entry}" "${varlist}"
     any_unset=true
   done
 
-  [[ "$any_unset" == true ]] || return 1
+  [[ "${any_unset}" == true ]] || return 1
 }
 
 # List all .env entries available in the password store.

@@ -84,11 +84,11 @@ ci: lint check_version test ## Run all CI checks locally
 get_version: ## Print the project version from src/env.bash
 	@grep -oE 'VERSION="[0-9]+\.[0-9]+\.[0-9]+"' src/env.bash | sed 's/VERSION="//;s/"//'
 
-.PHONY: get_changelog_entry
-get_changelog_entry: ## Print release notes for TAG to stdout (override with TAG=v1.0.0)
+.PHONY: get_changelog
+get_changelog: ## Print release notes for TAG to stdout (default: latest tag; override with TAG=v1.0.0)
 	@tag="$(TAG)"; tag="$${tag#v}"; \
 	if [[ -z "$$tag" ]]; then \
-	  printf 'get_changelog_entry: TAG is empty; pass TAG=v1.0.0 or create a git tag\n' >&2; \
+	  printf 'get_changelog: TAG is empty; pass TAG=v1.0.0 or create a git tag\n' >&2; \
 	  exit 1; \
 	fi; \
 	notes="$$(awk -v tag="$$tag" ' \
@@ -100,7 +100,7 @@ get_changelog_entry: ## Print release notes for TAG to stdout (override with TAG
 	    for (i=s;i<=e;i++) print lines[i] \
 	  }' CHANGELOG.md)"; \
 	if [[ -z "$$notes" ]]; then \
-	  printf 'get_changelog_entry: no CHANGELOG entry for %s\n' "$$tag" >&2; \
+	  printf 'get_changelog: no CHANGELOG entry for %s\n' "$$tag" >&2; \
 	  exit 1; \
 	fi; \
 	printf '%s\n' "$$notes"

@@ -199,11 +199,11 @@ portable_sed_inplace() {
   fi
 }
 
-# Sentinel strings used to locate the injected RC block.
+# Sentinel strings used to locate the injected RC block
 readonly RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
 readonly RC_SENTINEL_END="# pass-env-init END"
 
-# Sentinel strings used to locate the injected extensions export block.
+# Sentinel strings used to locate the injected extensions export block
 readonly EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
 readonly EXT_SENTINEL_END="# pass-env-extensions END"
 

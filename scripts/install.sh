@@ -8,14 +8,14 @@ set -euo pipefail
 # The placeholder "v0.0.0" triggers an automatic latest-release lookup when
 # running an un-baked copy of the script.
 VERSION="v0.0.0"
-REPO="thomaslaurenson/pass-env"
-BASE_URL="https://github.com/${REPO}/releases"
+readonly REPO="thomaslaurenson/pass-env"
+readonly BASE_URL="https://github.com/${REPO}/releases"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly CYAN='\033[0;36m'
+readonly NC='\033[0m'
 
 # Print an info message to stdout.
 #
@@ -59,7 +59,7 @@ check_pass_installed() {
     error "pass is not installed or not in PATH. Install pass before running this script."
 }
 
-# User-settable options; populated by parse_args().
+# User-settable options; populated by parse_args()
 INSTALL_TYPE="system"  # user | system
 NO_COMPLETION=false
 NO_MAN=false
@@ -77,7 +77,7 @@ LOCAL_SRC=""
 # must be exported for the installed extension to be visible to pass.
 NEEDS_ENABLE_EXTENSIONS=false
 
-# Installation path variables; populated by resolve_paths().
+# Installation path variables; populated by resolve_paths()
 EXTENSION_DIR=""
 MAN_DIR=""
 BASH_COMP_DIR=""
@@ -174,10 +174,10 @@ parse_args() {
 detect_os() {
   local os_name
   os_name="$(uname -s)"
-  case "$os_name" in
+  case "${os_name}" in
     Linux*)  printf 'linux'  ;;
     Darwin*) printf 'darwin' ;;
-    *)       error "Unsupported operating system: $os_name" ;;
+    *)       error "Unsupported operating system: ${os_name}" ;;
   esac
 }
 
@@ -195,15 +195,15 @@ detect_os() {
 #   0 always
 detect_local_source() {
   local src="${BASH_SOURCE[0]:-}"
-  if [[ -z "$src" || "$src" == "/dev/stdin" || "$src" == "bash" ]]; then
+  if [[ -z "${src}" || "${src}" == "/dev/stdin" || "${src}" == "bash" ]]; then
     return 0
   fi
 
   local script_dir
-  script_dir="$(cd "$(dirname "$src")" && pwd)"
+  script_dir="$(cd "$(dirname "${src}")" && pwd)"
   local candidate="${script_dir}/.."
   if [[ -f "${candidate}/src/env.bash" ]]; then
-    LOCAL_SRC="$(cd "$candidate" && pwd)"
+    LOCAL_SRC="$(cd "${candidate}" && pwd)"
   fi
 }
 
@@ -222,9 +222,9 @@ detect_local_source() {
 detect_needs_enable_extensions() {
   local pass_bin sys_ext_dir
   pass_bin="$(command -v pass 2>/dev/null)" || return 0
-  sys_ext_dir="$(grep -m1 '^SYSTEM_EXTENSION_DIR=' "$pass_bin" \
+  sys_ext_dir="$(grep -m1 '^SYSTEM_EXTENSION_DIR=' "${pass_bin}" \
     | sed -E 's/SYSTEM_EXTENSION_DIR="?([^"[:space:]]*)"?.*/\1/')" || true
-  if [[ -z "$sys_ext_dir" || "$EXTENSION_DIR" != "$sys_ext_dir" ]]; then
+  if [[ -z "${sys_ext_dir}" || "$EXTENSION_DIR" != "${sys_ext_dir}" ]]; then
     NEEDS_ENABLE_EXTENSIONS=true
   fi
 }
@@ -256,7 +256,7 @@ detect_zsh_comp_dir() {
     "/usr/local/share/zsh/site-functions"  # fallback
   )
   for dir in "${candidates[@]}"; do
-    [[ -d "$dir" ]] && printf '%s' "$dir" && return
+    [[ -d "${dir}" ]] && printf '%s' "${dir}" && return
   done
   printf '%s' "${candidates[2]}"
 }
@@ -279,18 +279,18 @@ resolve_paths() {
   local os="$1"
   local install_type="$2"
 
-  if [[ "$install_type" == "user" ]]; then
-    EXTENSION_DIR="${PASSWORD_STORE_DIR:-$HOME/.password-store}/.extensions"
-    MAN_DIR="$HOME/.local/share/man"
-    BASH_COMP_DIR="$HOME/.local/share/bash-completion/completions"
-    ZSH_COMP_DIR="$HOME/.local/share/zsh/site-functions"
-    INIT_SCRIPT_DIR="$HOME/.local/share/pass-env"
+  if [[ "${install_type}" == "user" ]]; then
+    EXTENSION_DIR="${PASSWORD_STORE_DIR:-${HOME}/.password-store}/.extensions"
+    MAN_DIR="${HOME}/.local/share/man"
+    BASH_COMP_DIR="${HOME}/.local/share/bash-completion/completions"
+    ZSH_COMP_DIR="${HOME}/.local/share/zsh/site-functions"
+    INIT_SCRIPT_DIR="${HOME}/.local/share/pass-env"
   else
-    # System install — use Homebrew paths on macOS where available.
-    if [[ "$os" == "darwin" ]]; then
+    # System install: use Homebrew paths on macOS where available.
+    if [[ "${os}" == "darwin" ]]; then
       local prefix
       prefix="$(brew_prefix)"
-      if [[ -n "$prefix" ]]; then
+      if [[ -n "${prefix}" ]]; then
         EXTENSION_DIR="${prefix}/lib/password-store/extensions"
         MAN_DIR="${prefix}/share/man"
         BASH_COMP_DIR="${prefix}/etc/bash_completion.d"
@@ -327,16 +327,16 @@ resolve_paths() {
 maybe_mkdir() {
   local dir="$1"
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] would create: $dir"
+    info "[dry-run] would create: ${dir}"
     return 0
   fi
-  if mkdir -p "$dir" 2>/dev/null; then
+  if mkdir -p "${dir}" 2>/dev/null; then
     return 0
   fi
   if [[ "$INSTALL_TYPE" == "system" ]]; then
-    sudo mkdir -p "$dir" || error "Failed to create directory: $dir"
+    sudo mkdir -p "${dir}" || error "Failed to create directory: ${dir}"
   else
-    error "Failed to create directory: $dir (check permissions, or use --system for a system install)"
+    error "Failed to create directory: ${dir} (check permissions, or use --system for a system install)"
   fi
 }
 
@@ -359,18 +359,18 @@ maybe_install() {
   local src="$2"
   local dest="$3"
   local dest_dir
-  dest_dir="$(dirname "$dest")"
+  dest_dir="$(dirname "${dest}")"
 
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] would install: $src -> $dest"
+    info "[dry-run] would install: ${src} -> ${dest}"
     return 0
   fi
-  if [[ -w "$dest_dir" ]]; then
-    install -m "$mode" "$src" "$dest"
+  if [[ -w "${dest_dir}" ]]; then
+    install -m "${mode}" "${src}" "${dest}"
   elif [[ "$INSTALL_TYPE" == "system" ]]; then
-    sudo install -m "$mode" "$src" "$dest"
+    sudo install -m "${mode}" "${src}" "${dest}"
   else
-    error "Cannot write to $dest_dir (check permissions, or use --system for a system install)"
+    error "Cannot write to ${dest_dir} (check permissions, or use --system for a system install)"
   fi
 }
 
@@ -388,17 +388,17 @@ maybe_install() {
 #   0 on success
 #   exits 1 if the version cannot be determined
 resolve_version() {
-  if [[ -n "$TAG" ]]; then
+  if [[ -n "${TAG}" ]]; then
     VERSION="${TAG#v}"
     VERSION="v${VERSION}"
     return
   fi
 
   # When running from a local clone, read VERSION directly from src/env.bash.
-  if [[ -n "$LOCAL_SRC" ]]; then
+  if [[ -n "${LOCAL_SRC}" ]]; then
     local raw
     raw="$(grep '^VERSION=' "${LOCAL_SRC}/src/env.bash" | sed -E 's/VERSION="(.*)"/\1/')"
-    [[ -z "$raw" ]] && error "Could not read VERSION from ${LOCAL_SRC}/src/env.bash"
+    [[ -z "${raw}" ]] && error "Could not read VERSION from ${LOCAL_SRC}/src/env.bash"
     VERSION="v${raw}"
     return
   fi
@@ -409,11 +409,11 @@ resolve_version() {
     info "Fetching latest release version..."
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
     if command -v curl &>/dev/null; then
-      VERSION="$(curl -fsSL --max-time 30 "$api_url" \
+      VERSION="$(curl -fsSL --max-time 30 "${api_url}" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     elif command -v wget &>/dev/null; then
-      VERSION="$(wget --timeout=30 -qO- "$api_url" \
+      VERSION="$(wget --timeout=30 -qO- "${api_url}" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     else
@@ -442,12 +442,12 @@ download_tarball() {
   local url="${BASE_URL}/download/${version}/pass-env-${version}.tar.gz"
 
   info "Downloading pass-env ${version}..."
-  step "$url"
+  step "${url}"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL --max-time 30 "$url" -o "$dest" || error "Download failed: $url"
+    curl -fsSL --max-time 30 "${url}" -o "${dest}" || error "Download failed: ${url}"
   elif command -v wget &>/dev/null; then
-    wget --timeout=30 -qO "$dest" "$url" || error "Download failed: $url"
+    wget --timeout=30 -qO "${dest}" "${url}" || error "Download failed: ${url}"
   else
     error "curl or wget is required"
   fi
@@ -471,7 +471,7 @@ verify_checksum() {
   local version="$1"
   local tarball="$2"
   local tarball_name
-  tarball_name="$(basename "$tarball")"
+  tarball_name="$(basename "${tarball}")"
 
   local sum_cmd=""
   if command -v sha256sum &>/dev/null; then
@@ -488,24 +488,24 @@ verify_checksum() {
   local checksums_file="${tarball%/*}/checksums.txt"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL --max-time 30 "$checksums_url" -o "$checksums_file" \
-      || error "Failed to download checksums.txt: $checksums_url"
+    curl -fsSL --max-time 30 "${checksums_url}" -o "${checksums_file}" \
+      || error "Failed to download checksums.txt: ${checksums_url}"
   elif command -v wget &>/dev/null; then
-    wget --timeout=30 -qO "$checksums_file" "$checksums_url" \
-      || error "Failed to download checksums.txt: $checksums_url"
+    wget --timeout=30 -qO "${checksums_file}" "${checksums_url}" \
+      || error "Failed to download checksums.txt: ${checksums_url}"
   else
     error "curl or wget is required"
   fi
 
   local expected_hash
-  expected_hash="$(grep -F " ${tarball_name}" "$checksums_file" | awk '{print $1}')"
-  [[ -n "$expected_hash" ]] \
+  expected_hash="$(grep -F " ${tarball_name}" "${checksums_file}" | awk '{print $1}')"
+  [[ -n "${expected_hash}" ]] \
     || error "No checksum entry found for ${tarball_name} in checksums.txt"
 
   local actual_hash
-  actual_hash="$(${sum_cmd} "$tarball" | awk '{print $1}')"
+  actual_hash="$(${sum_cmd} "${tarball}" | awk '{print $1}')"
 
-  if [[ "$actual_hash" != "$expected_hash" ]]; then
+  if [[ "${actual_hash}" != "${expected_hash}" ]]; then
     error "Checksum mismatch for ${tarball_name}:
   expected: ${expected_hash}
   actual:   ${actual_hash}"
@@ -558,7 +558,7 @@ detect_shells() {
   local current_shell
   current_shell="$(basename "${SHELL:-}")"
 
-  case "$current_shell" in
+  case "${current_shell}" in
     bash)
       shells="bash"
       [[ -f "${HOME}/.zshrc" ]] && shells="bash zsh"
@@ -574,14 +574,14 @@ detect_shells() {
       ;;
   esac
 
-  printf '%s' "$shells"
+  printf '%s' "${shells}"
 }
 
-# Sentinel strings used to bracket the injected RC block.
+# Sentinel strings used to bracket the injected RC block
 RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
 RC_SENTINEL_END="# pass-env-init END"
 
-# Sentinel strings used to bracket the injected PASSWORD_STORE_ENABLE_EXTENSIONS block.
+# Sentinel strings used to bracket the injected PASSWORD_STORE_ENABLE_EXTENSIONS block
 EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
 EXT_SENTINEL_END="# pass-env-extensions END"
 
@@ -605,24 +605,24 @@ inject_rc() {
   local rc_file="$1"
   local init_script_path="$2"
 
-  if [[ ! -f "$rc_file" ]]; then
+  if [[ ! -f "${rc_file}" ]]; then
     info "Creating ${rc_file}"
-    touch "$rc_file"
+    touch "${rc_file}"
   fi
 
-  if grep -qF "$RC_SENTINEL_BEGIN" "$rc_file"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
+  if grep -qF "$RC_SENTINEL_BEGIN" "${rc_file}"; then
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
     return 0
   fi
 
-  cat >> "$rc_file" <<EOF
+  cat >> "${rc_file}" <<EOF
 
 ${RC_SENTINEL_BEGIN}
 # Added by pass-env installer. Remove this block, or run uninstall.sh, to undo.
 [[ -f "${init_script_path}" ]] && source "${init_script_path}"
 ${RC_SENTINEL_END}
 EOF
-  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$rc_file"
+  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "${rc_file}"
 }
 
 # Append a guarded export block for PASSWORD_STORE_ENABLE_EXTENSIONS to a
@@ -643,24 +643,24 @@ EOF
 inject_extensions_rc() {
   local rc_file="$1"
 
-  if [[ ! -f "$rc_file" ]]; then
+  if [[ ! -f "${rc_file}" ]]; then
     info "Creating ${rc_file}"
-    touch "$rc_file"
+    touch "${rc_file}"
   fi
 
-  if grep -qF "$EXT_SENTINEL_BEGIN" "$rc_file"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$rc_file"
+  if grep -qF "$EXT_SENTINEL_BEGIN" "${rc_file}"; then
+    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
     return 0
   fi
 
-  cat >> "$rc_file" <<EOF
+  cat >> "${rc_file}" <<EOF
 
 ${EXT_SENTINEL_BEGIN}
 # Added by pass-env installer. Required for pass to load user-dir extensions.
 export PASSWORD_STORE_ENABLE_EXTENSIONS=true
 ${EXT_SENTINEL_END}
 EOF
-  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$rc_file"
+  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "${rc_file}"
 }
 
 # Print a pre-install summary of resolved paths and options.
@@ -678,9 +678,9 @@ EOF
 show_summary() {
   local version="$1"
   local os="$2"
-  info "$(printf '%-24s %s' "pass-env version:"  "$version")"
+  info "$(printf '%-24s %s' "pass-env version:"  "${version}")"
   info "$(printf '%-24s %s' "Install type:"      "$INSTALL_TYPE")"
-  info "$(printf '%-24s %s' "OS:"                "$os")"
+  info "$(printf '%-24s %s' "OS:"                "${os}")"
   info "$(printf '%-24s %s' "Extension dir:"     "$EXTENSION_DIR")"
   [[ "$NO_MAN" == false ]]        && info "$(printf '%-24s %s' "Man dir:"           "${MAN_DIR}/man1")"
   [[ "$NO_COMPLETION" == false ]] && info "$(printf '%-24s %s' "Bash completion:"   "$BASH_COMP_DIR")"
@@ -709,67 +709,64 @@ main() {
   resolve_version
   [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || error "Invalid version format: ${VERSION}"
-  resolve_paths "$os" "$INSTALL_TYPE"
+  resolve_paths "${os}" "$INSTALL_TYPE"
   detect_needs_enable_extensions
-  show_summary "$VERSION" "$os"
+  show_summary "$VERSION" "${os}"
 
   if [[ "$YES" != true && "$DRY_RUN" != true ]]; then
     printf '\nProceed with installation? [y/N] '
     read -r reply
-    [[ "$reply" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+    [[ "${reply}" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
   fi
 
   local src_dir
 
-  if [[ -n "$LOCAL_SRC" ]]; then
+  if [[ -n "${LOCAL_SRC}" ]]; then
     info "Installing from local source: ${LOCAL_SRC}"
-    src_dir="$LOCAL_SRC"
+    src_dir="${LOCAL_SRC}"
   else
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"' EXIT INT TERM
+    trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "${tmp_dir}"' EXIT INT TERM
 
     local tarball="${tmp_dir}/pass-env-${VERSION}.tar.gz"
-    download_tarball "$VERSION" "$tarball"
-    verify_checksum  "$VERSION" "$tarball"
+    download_tarball "$VERSION" "${tarball}"
+    verify_checksum  "$VERSION" "${tarball}"
 
     info "Extracting archive..."
-    tar -xzf "$tarball" -C "$tmp_dir" || error "Failed to extract archive"
+    tar -xzf "${tarball}" -C "${tmp_dir}" || error "Failed to extract archive"
 
     # Assert the tarball contained exactly one top-level directory.
     # head -1 would silently pick the first if there were multiple, masking a
     # malformed or unexpected tarball structure.
     local -a extracted_dirs
-    mapfile -t extracted_dirs < <(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d)
+    mapfile -t extracted_dirs < <(find "${tmp_dir}" -maxdepth 1 -mindepth 1 -type d)
     [[ ${#extracted_dirs[@]} -eq 1 ]] \
       || error "Expected exactly 1 top-level directory in archive, found ${#extracted_dirs[@]}"
     src_dir="${extracted_dirs[0]}"
   fi
 
-  validate_src_dir "$src_dir"
+  validate_src_dir "${src_dir}"
 
   # Detect shells once; reused for completions, init, and extensions steps.
   local shells
   shells="$(detect_shells)"
-  if [[ -z "$shells" ]]; then
+  if [[ -z "${shells}" ]]; then
     warn "Could not detect a supported shell; skipping completion and shell integration."
   fi
 
-  # 1. Install the pass extension.
   maybe_mkdir "$EXTENSION_DIR"
   maybe_install 0755 "${src_dir}/src/env.bash" "${EXTENSION_DIR}/env.bash"
   added "${EXTENSION_DIR}/env.bash"
 
-  # 2. Install the man page.
   if [[ "$NO_MAN" == false ]]; then
     maybe_mkdir "${MAN_DIR}/man1"
     maybe_install 0644 "${src_dir}/man/pass-env.1" "${MAN_DIR}/man1/pass-env.1"
     added "${MAN_DIR}/man1/pass-env.1"
   fi
 
-  # 3. Install shell completion.
   if [[ "$NO_COMPLETION" == false ]]; then
-    if [[ "$shells" == *"bash"* ]]; then
+    if [[ "${shells}" == *"bash"* ]]; then
       maybe_mkdir "$BASH_COMP_DIR"
       maybe_install 0644 \
         "${src_dir}/completion/pass-env.bash.completion" \
@@ -777,7 +774,7 @@ main() {
       added "${BASH_COMP_DIR}/pass-env"
     fi
 
-    if [[ "$shells" == *"zsh"* ]]; then
+    if [[ "${shells}" == *"zsh"* ]]; then
       maybe_mkdir "$ZSH_COMP_DIR"
       maybe_install 0644 \
         "${src_dir}/completion/_pass-env" \
@@ -786,7 +783,6 @@ main() {
     fi
   fi
 
-  # 4. Install shell integration (pass-env-init.sh) and uninstall script.
   # Create INIT_SCRIPT_DIR when either component will be installed.
   if [[ "$NO_INIT" == false || "$NO_UNINSTALL" == false ]]; then
     maybe_mkdir "$INIT_SCRIPT_DIR"
@@ -800,11 +796,10 @@ main() {
 
     local init_path="${INIT_SCRIPT_DIR}/pass-env-init.sh"
 
-    [[ "$shells" == *"bash"* ]] && inject_rc "${HOME}/.bashrc" "$init_path"
-    [[ "$shells" == *"zsh"* ]]  && inject_rc "${HOME}/.zshrc"  "$init_path"
+    [[ "${shells}" == *"bash"* ]] && inject_rc "${HOME}/.bashrc" "${init_path}"
+    [[ "${shells}" == *"zsh"* ]]  && inject_rc "${HOME}/.zshrc"  "${init_path}"
   fi
 
-  # 5. Install the uninstall script.
   if [[ "$NO_UNINSTALL" == false ]]; then
     maybe_install 0755 \
       "${src_dir}/contrib/pass-env-uninstall.sh" \
@@ -812,11 +807,10 @@ main() {
     added "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
   fi
 
-  # 6. Inject PASSWORD_STORE_ENABLE_EXTENSIONS into RC file(s) if required.
   if [[ "$NEEDS_ENABLE_EXTENSIONS" == true ]]; then
     if [[ "$NO_INIT" == false ]]; then
-      [[ "$shells" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
-      [[ "$shells" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
+      [[ "${shells}" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
+      [[ "${shells}" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
     else
       warn "PASSWORD_STORE_ENABLE_EXTENSIONS=true is required for pass to load"
       warn "this extension. Add the following line to your shell RC file:"

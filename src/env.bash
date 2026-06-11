@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.2.3"
+readonly VERSION="0.2.4"
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -41,7 +41,7 @@ _fzf_select_entry() {
   if ! command -v fzf &>/dev/null; then
     die "ENTRY is required (fzf not installed for interactive selection)"
   fi
-  local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  local password_store_dir="${PASSWORD_STORE_DIR:-${HOME}/.password-store}"
   local fzf_args=(
     --multi
     --height=40%
@@ -80,7 +80,7 @@ _fzf_select_entry() {
 #   exits 1 if the candidate is invalid or no entry can be resolved
 _resolve_entry() {
   local candidate="$1"
-  local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+  local password_store_dir="${PASSWORD_STORE_DIR:-${HOME}/.password-store}"
   if [[ -n "${candidate}" ]]; then
     [[ "${candidate}" == *.env ]] || die "entry name must end in .env: ${candidate}"
     # Reject absolute paths and any component containing '..' to prevent
@@ -145,7 +145,7 @@ EOF
 # Returns:
 #   0 always
 version() {
-  printf 'pass-env %s\n' "$VERSION"
+  printf 'pass-env %s\n' "${VERSION}"
 }
 
 # List all .env entries available in the password store.
@@ -161,12 +161,12 @@ version() {
 # Returns:
 #   0 always
 list_entries() {
-  local password_store_dir="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
-  [[ -d "$password_store_dir" ]] \
-    || die "password store not found: $password_store_dir (has pass been initialised?)"
+  local password_store_dir="${PASSWORD_STORE_DIR:-${HOME}/.password-store}"
+  [[ -d "${password_store_dir}" ]] \
+    || die "password store not found: ${password_store_dir} (has pass been initialised?)"
 
-  find "$password_store_dir" -name "*.env.gpg" \( -type f -o -type l \) \
-    | while IFS= read -r f; do printf '%s\n' "${f#"$password_store_dir/"}"; done \
+  find "${password_store_dir}" -name "*.env.gpg" \( -type f -o -type l \) \
+    | while IFS= read -r f; do printf '%s\n' "${f#"${password_store_dir}/"}"; done \
     | sed 's/\.gpg$//' \
     | sort
 }
@@ -189,7 +189,7 @@ _parse_entry() {
   local entry="$1" content key val
   content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
   while IFS= read -r line; do
-    line="${line%$'\r'}"   # strip trailing CR (handles CRLF files transparently)
+    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
     [[ -z "${line}" ]] && continue
     case "${line}" in \#*) continue ;; esac
     if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
@@ -218,7 +218,7 @@ _export_entry() {
   local entry="$1" content key val
   content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
   while IFS= read -r line; do
-    line="${line%$'\r'}"   # strip trailing CR (handles CRLF files transparently)
+    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
     [[ -z "${line}" ]] && continue
     case "${line}" in \#*) continue ;; esac
     if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
@@ -297,9 +297,8 @@ _unset_env() {
   fi
 }
 
-# Dispatch to the appropriate subcommand handler.
 cmd="${1:-help}"; shift || true
-case "$cmd" in
+case "${cmd}" in
   help|-h|--help) help ;;
   version|-v|--version) version ;;
   list) list_entries ;;
@@ -312,12 +311,12 @@ case "$cmd" in
     if [[ "${#raw_entries[@]}" -eq 0 ]]; then
       entries=()
       resolved="$(_resolve_entry "")" || exit 1
-      while IFS= read -r e; do entries+=("$e"); done <<< "$resolved"
+      while IFS= read -r e; do entries+=("${e}"); done <<< "${resolved}"
     else
       entries=()
       for raw_e in "${raw_entries[@]}"; do
         resolved="$(_resolve_entry "${raw_e}")" || exit 1
-        while IFS= read -r e; do entries+=("$e"); done <<< "$resolved"
+        while IFS= read -r e; do entries+=("${e}"); done <<< "${resolved}"
       done
     fi
     _run_with_env "${entries[@]}" -- "$@"
@@ -330,11 +329,11 @@ case "$cmd" in
     [[ "${1:-}" == "--" ]] && shift
     if [[ "${#raw_entries[@]}" -eq 0 ]]; then
       resolved="$(_resolve_entry "")" || exit 1
-      while IFS= read -r e; do _set_env "$e"; done <<< "$resolved"
+      while IFS= read -r e; do _set_env "${e}"; done <<< "${resolved}"
     else
       for raw_e in "${raw_entries[@]}"; do
         resolved="$(_resolve_entry "${raw_e}")" || exit 1
-        while IFS= read -r e; do _set_env "$e"; done <<< "$resolved"
+        while IFS= read -r e; do _set_env "${e}"; done <<< "${resolved}"
       done
     fi
     ;;
@@ -346,11 +345,11 @@ case "$cmd" in
     [[ "${1:-}" == "--" ]] && shift
     if [[ "${#raw_entries[@]}" -eq 0 ]]; then
       resolved="$(_resolve_entry "")" || exit 1
-      while IFS= read -r e; do _unset_env "$e"; done <<< "$resolved"
+      while IFS= read -r e; do _unset_env "${e}"; done <<< "${resolved}"
     else
       for raw_e in "${raw_entries[@]}"; do
         resolved="$(_resolve_entry "${raw_e}")" || exit 1
-        while IFS= read -r e; do _unset_env "$e"; done <<< "$resolved"
+        while IFS= read -r e; do _unset_env "${e}"; done <<< "${resolved}"
       done
     fi
     ;;
