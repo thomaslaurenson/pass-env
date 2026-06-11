@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 - 2026--6-11
+
+### Fixed
+
+- General tidy and proof read
+
 ## 0.2.3 - 2026-05-15
 
 ### Fixed
