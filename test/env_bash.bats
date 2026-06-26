@@ -227,6 +227,53 @@ setup() {
   [[ "$output" =~ "symlinked.env" ]]
 }
 
+# Canonical path verification (symlink escape prevention)
+
+@test "set: accepts symlink that resolves within the store" {
+  # symlinked.env.gpg -> myentry.env.gpg (both inside the fixture store)
+  run bash "$ENV_BASH" set symlinked.env
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "export MY_VAR=" ]]
+}
+
+@test "set: rejects symlink that escapes the store" {
+  # Create a symlink inside the store that points outside to /etc/hostname
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hostname "${evil}"
+  run bash "$ENV_BASH" set evil.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "run: rejects symlink that escapes the store" {
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hostname "${evil}"
+  run bash "$ENV_BASH" run evil.env -- true
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "unset: rejects symlink that escapes the store" {
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hostname "${evil}"
+  run bash "$ENV_BASH" unset evil.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "set: rejects symlink via subdirectory that escapes the store" {
+  # Create a subdirectory with a symlink pointing outside
+  mkdir -p "${PASSWORD_STORE_DIR}/subdir"
+  ln -sf /etc/hostname "${PASSWORD_STORE_DIR}/subdir/escape.env.gpg"
+  run bash "$ENV_BASH" set subdir/escape.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -rf "${PASSWORD_STORE_DIR}/subdir"
+}
+
 # IFS-safe unset output
 
 @test "unset: output is correct regardless of IFS value" {

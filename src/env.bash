@@ -87,7 +87,20 @@ _resolve_entry() {
     # directory traversal outside PASSWORD_STORE_DIR.
     [[ "${candidate}" == /* || "${candidate}" == *..* ]] && \
       die "invalid entry path (no traversal allowed): ${candidate}"
-    if [[ -f "${password_store_dir}/${candidate}.gpg" ]]; then
+    local gpg_file="${password_store_dir}/${candidate}.gpg"
+    if [[ -f "${gpg_file}" ]]; then
+      # Verify the canonical (symlink-resolved) path stays within the store.
+      # Prevents symlink attacks where a .gpg file inside the store points
+      # to arbitrary files outside the store.
+      local real_file real_store
+      real_file="$(realpath -- "${gpg_file}")" \
+        || die "cannot resolve path: ${candidate}"
+      real_store="$(realpath -- "${password_store_dir}")" \
+        || die "cannot resolve password store path"
+      # Ensure the resolved file path is within the resolved store directory.
+      # The trailing / prevents prefix false positives (e.g. /store/foo matching /store_foo/bar).
+      [[ "${real_file}" == "${real_store}/"* ]] || \
+        die "entry path escapes password store (symlink): ${candidate}"
       printf '%s\n' "${candidate}"
       return
     fi
