@@ -274,6 +274,36 @@ setup() {
   rm -rf "${PASSWORD_STORE_DIR}/subdir"
 }
 
+# list_entries: symlink filtering
+
+@test "list: excludes symlinks that escape the store" {
+  # Create a symlink inside the store that points outside
+  local evil="${PASSWORD_STORE_DIR}/escape_list.env.gpg"
+  ln -sf /etc/hostname "${evil}"
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  # The escaping symlink should NOT appear in the listing
+  ! [[ "$output" =~ "escape_list.env" ]]
+  rm -f "${evil}"
+}
+
+@test "list: still includes valid symlinks within the store" {
+  # symlinked.env.gpg -> myentry.env.gpg (both inside the fixture store)
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "symlinked.env" ]]
+}
+
+@test "list: excludes dangling symlinks" {
+  # Create a dangling symlink (target doesn't exist)
+  local dangling="${PASSWORD_STORE_DIR}/dangling.env.gpg"
+  ln -sf /nonexistent/path/file.env "${dangling}"
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "dangling.env" ]]
+  rm -f "${dangling}"
+}
+
 # IFS-safe unset output
 
 @test "unset: output is correct regardless of IFS value" {

@@ -21,6 +21,26 @@ readonly VERSION="0.2.4"
 #   exits 1 (does not return to the caller)
 die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
 
+# Verify that a .gpg file's canonical (symlink-resolved) path stays within
+# the password store directory. Prevents symlink attacks where a .gpg file
+# inside the store points to arbitrary files outside the store.
+#
+# Arguments:
+#   $1 - Path to the .gpg file (absolute)
+#   $2 - Password store directory (absolute)
+# Returns:
+#   0 if the resolved path is within the store
+#   1 if the resolved path escapes the store or cannot be resolved
+_is_entry_in_store() {
+  local gpg_file="$1"
+  local password_store_dir="$2"
+  local real_file real_store
+  real_file="$(realpath -- "${gpg_file}")" || return 1
+  real_store="$(realpath -- "${password_store_dir}")" || return 1
+  # The trailing / prevents prefix false positives (e.g. /store/foo matching /store_foo/bar).
+  [[ "${real_file}" == "${real_store}/"* ]]
+}
+
 # Present an interactive fzf picker of all .env entries in the password store.
 #
 # Supports TAB-based multi-selection (fzf --multi). Prints selected entry
@@ -54,7 +74,11 @@ _fzf_select_entry() {
   [[ -d "${password_store_dir}" ]] \
     || die "password store not found: ${password_store_dir} (has pass been initialised?)"
   find "${password_store_dir}" -name "*.env.gpg" \( -type f -o -type l \) \
-    | while IFS= read -r f; do printf '%s\n' "${f#"${password_store_dir}/"}"; done \
+    | while IFS= read -r f; do
+      # Skip symlinks that resolve outside the password store.
+      _is_entry_in_store "${f}" "${password_store_dir}" || continue
+      printf '%s\n' "${f#"${password_store_dir}/"}"
+    done \
     | sed 's/\.gpg$//' \
     | sort \
     | fzf "${fzf_args[@]}"
@@ -89,18 +113,9 @@ _resolve_entry() {
       die "invalid entry path (no traversal allowed): ${candidate}"
     local gpg_file="${password_store_dir}/${candidate}.gpg"
     if [[ -f "${gpg_file}" ]]; then
-      # Verify the canonical (symlink-resolved) path stays within the store.
-      # Prevents symlink attacks where a .gpg file inside the store points
-      # to arbitrary files outside the store.
-      local real_file real_store
-      real_file="$(realpath -- "${gpg_file}")" \
-        || die "cannot resolve path: ${candidate}"
-      real_store="$(realpath -- "${password_store_dir}")" \
-        || die "cannot resolve password store path"
-      # Ensure the resolved file path is within the resolved store directory.
-      # The trailing / prevents prefix false positives (e.g. /store/foo matching /store_foo/bar).
-      [[ "${real_file}" == "${real_store}/"* ]] || \
+      if ! _is_entry_in_store "${gpg_file}" "${password_store_dir}"; then
         die "entry path escapes password store (symlink): ${candidate}"
+      fi
       printf '%s\n' "${candidate}"
       return
     fi
@@ -179,7 +194,11 @@ list_entries() {
     || die "password store not found: ${password_store_dir} (has pass been initialised?)"
 
   find "${password_store_dir}" -name "*.env.gpg" \( -type f -o -type l \) \
-    | while IFS= read -r f; do printf '%s\n' "${f#"${password_store_dir}/"}"; done \
+    | while IFS= read -r f; do
+      # Skip symlinks that resolve outside the password store.
+      _is_entry_in_store "${f}" "${password_store_dir}" || continue
+      printf '%s\n' "${f#"${password_store_dir}/"}"
+    done \
     | sed 's/\.gpg$//' \
     | sort
 }
