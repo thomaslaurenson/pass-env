@@ -41,6 +41,33 @@ _is_entry_in_store() {
   [[ "${real_file}" == "${real_store}/"* ]]
 }
 
+# Check whether a variable name is dangerous to set from an untrusted entry.
+#
+# Some environment variables cause code execution or change interpreter
+# behaviour simply by being set (e.g. PATH hijacks binary resolution,
+# LD_PRELOAD injects shared objects, PROMPT_COMMAND runs before each prompt).
+# A denylist is never complete, but it blocks the most common attack vectors.
+#
+# Arguments:
+#   $1 - Variable name to check
+# Returns:
+#   0 if the name is dangerous
+#   1 if the name is safe
+_is_dangerous_var() {
+  case "$1" in
+    PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|\
+    PROMPT_COMMAND|PS1|PS2|PS3|PS4|\
+    GLOBIGNORE|RANDOM|LINENO|PIPESTATUS|DIRSTACK)
+      return 0 ;;
+    LD_*|DYLD_*)
+      return 0 ;;
+    PYTHONPATH|PERL5LIB|RUBYLIB|NODE_OPTIONS)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 # Present an interactive fzf picker of all .env entries in the password store.
 #
 # Supports TAB-based multi-selection (fzf --multi). Prints selected entry
@@ -203,6 +230,35 @@ list_entries() {
     | sort
 }
 
+# Iterate over each validated variable in a decrypted pass entry, calling a
+# callback for every KEY=VALUE pair. All parsing, validation, and denylist
+# checks happen here in one place, callers only provide the emit action.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+#   $2 - Callback function name; called as "$callback" "$key" "$val"
+# Returns:
+#   0 on success, exits 1 on decryption failure, invalid key name, dangerous
+#   variable, or unsupported line format
+_entry_for_each_var() {
+  local entry="$1" callback="$2"
+  local content key val line
+  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
+  while IFS= read -r line; do
+    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
+    [[ -z "${line}" ]] && continue
+    case "${line}" in \#*) continue ;; esac
+    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
+      _is_dangerous_var "${key}" && die "refusing to set sensitive variable from entry: ${key}"
+      "${callback}" "${key}" "${val}"
+    else
+      die "unsupported line format in ${entry} (expected KEY=VALUE)"
+    fi
+  done <<< "${content}"
+}
+
 # Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
 #
 # Each non-blank, non-comment line must be in KEY=VALUE format. Key names are
@@ -218,20 +274,12 @@ list_entries() {
 #   0 on success
 #   exits 1 on decryption failure, invalid key name, or unsupported line format
 _parse_entry() {
-  local entry="$1" content key val
-  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
-  while IFS= read -r line; do
-    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
-    [[ -z "${line}" ]] && continue
-    case "${line}" in \#*) continue ;; esac
-    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
-      printf '%s=%q\n' "${key}" "${val}"
-    else
-      die "unsupported line format in ${entry} (expected KEY=VALUE)"
-    fi
-  done <<< "${content}"
+  _entry_for_each_var "$1" _parse_entry_emit
+}
+
+# Callback for _parse_entry: emit KEY=%q to stdout.
+_parse_entry_emit() {
+  printf '%s=%q\n' "$1" "$2"
 }
 
 # Export all variables from a pass entry directly into the current (sub)shell.
@@ -247,20 +295,12 @@ _parse_entry() {
 #   0 on success, exits 1 on decryption failure, invalid key name, or
 #   unsupported line format
 _export_entry() {
-  local entry="$1" content key val
-  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
-  while IFS= read -r line; do
-    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
-    [[ -z "${line}" ]] && continue
-    case "${line}" in \#*) continue ;; esac
-    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
-      export "${key}=${val}"
-    else
-      die "unsupported line format in ${entry} (expected KEY=VALUE)"
-    fi
-  done <<< "${content}"
+  _entry_for_each_var "$1" _export_entry_emit
+}
+
+# Callback for _export_entry: export KEY=VALUE directly.
+_export_entry_emit() {
+  export "$1=$2"
 }
 
 # Execute a command with environment variables from one or more pass entries.
