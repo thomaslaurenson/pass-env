@@ -23,9 +23,9 @@ brew install pass fzf
 
 ## Installation
 
-### Verified Install (Recommended)
+### Inspect Before Running
 
-Download the installer and its published checksum, verify the hash, inspect the script, then run it:
+Download the installer, optionally verify its checksum against the published release (this protects against accidental transport corruption, not against a compromised release), inspect the script, then run it:
 
 ```sh
 BASE_URL="https://github.com/thomaslaurenson/pass-env/releases/latest/download"
@@ -53,7 +53,7 @@ For a user-local install with no `sudo`, pass the `--user` argument:
 curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash -s -- --user
 ```
 
-> **Note:** When piped directly to bash, the installer runs without giving you a chance to verify its contents. Use the recommended path in the section above if you require pre-execution integrity checking.
+> **Note:** When piped directly to bash, the installer runs without giving you a chance to inspect its contents first. The installer performs an automatic checksum verification against the published release (protecting against transport corruption). Download and review the script manually if you want to inspect it before running.
 
 There are a selection of other install options, including:
 
@@ -63,6 +63,7 @@ There are a selection of other install options, including:
 - `--no-init`: Do not install shell initialization helper scripts
 - `--no-uninstall`: Do not install pass env uninstaller
 - `--dry-run`: Show what operations would be done
+- `--skip-checksum`: Skip tarball checksum verification
 
 ## Pass Entry Example
 

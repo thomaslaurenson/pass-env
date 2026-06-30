@@ -68,6 +68,7 @@ NO_UNINSTALL=false
 TAG=""
 DRY_RUN=false
 YES=false
+SKIP_CHECKSUM=false
 
 # Populated by detect_local_source(); non-empty means install from this path
 # instead of downloading a release tarball.
@@ -107,6 +108,7 @@ OPTIONS:
   --no-init           Skip pass-env-init.sh shell integration
   --no-uninstall      Skip uninstall script installation
   --dry-run           Show what would be installed without making changes
+  --skip-checksum     Skip tarball checksum verification (not recommended)
   -y, --yes           Skip confirmation prompt (for scripted use)
 
 EXAMPLES:
@@ -139,7 +141,7 @@ EOF
 # Arguments:
 #   $@ - Command-line arguments forwarded from main
 # Globals:
-#   TAG, INSTALL_TYPE, NO_COMPLETION, NO_MAN, NO_INIT, DRY_RUN, YES - updated
+#   TAG, INSTALL_TYPE, NO_COMPLETION, NO_MAN, NO_INIT, DRY_RUN, YES, SKIP_CHECKSUM - updated
 # Returns:
 #   0 on success
 #   exits 1 for unknown options
@@ -158,6 +160,7 @@ parse_args() {
       --no-init)       NO_INIT=true;          shift ;;
       --no-uninstall)  NO_UNINSTALL=true;     shift ;;
       --dry-run)       DRY_RUN=true;           shift ;;
+      --skip-checksum) SKIP_CHECKSUM=true;     shift ;;
       -y|--yes)        YES=true;               shift ;;
       *) error "Unknown option: $1. Run with --help for usage." ;;
     esac
@@ -456,22 +459,33 @@ download_tarball() {
 # Download and verify the SHA-256 checksum of a release tarball.
 #
 # Downloads checksums.txt from the same release, locates the entry for the
-# tarball filename, and compares it against the local file. Skips verification
-# with a warning when neither sha256sum nor shasum is available.
+# tarball filename, and compares it against the local file. This protects
+# against accidental transport corruption but not against a compromised release
+# (the checksum and tarball are fetched from the same origin and are unsigned).
+#
+# When neither sha256sum nor shasum is available, the function errors out
+# rather than silently skipping — use --skip-checksum to explicitly opt out.
 #
 # Arguments:
 #   $1 - Version tag (e.g. v1.2.3)
 #   $2 - Local path to the downloaded tarball
 # Globals:
 #   BASE_URL - read for the download URL prefix
+#   SKIP_CHECKSUM - if true, skip verification entirely
 # Returns:
 #   0 on success
-#   exits 1 if the hash does not match or checksums.txt cannot be downloaded
+#   exits 1 if the hash does not match, checksums.txt cannot be downloaded, or
+#   no hashing tool is available (unless SKIP_CHECKSUM is true)
 verify_checksum() {
   local version="$1"
   local tarball="$2"
   local tarball_name
   tarball_name="$(basename "${tarball}")"
+
+  if [[ "$SKIP_CHECKSUM" == true ]]; then
+    warn "Skipping checksum verification (--skip-checksum)."
+    return 0
+  fi
 
   local sum_cmd=""
   if command -v sha256sum &>/dev/null; then
@@ -479,8 +493,8 @@ verify_checksum() {
   elif command -v shasum &>/dev/null; then
     sum_cmd="shasum -a 256"
   else
-    warn "sha256sum/shasum not found; skipping checksum verification."
-    return 0
+    error "sha256sum/shasum not found; cannot verify tarball checksum.
+  Install a hashing tool, or pass --skip-checksum to proceed without verification."
   fi
 
   info "Verifying checksum..."
