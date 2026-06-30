@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.2.4 - 2026--6-11
+## 0.2.5 - 2026-06-30
+
+### Added
+
+- Blacklist of known bad keys potentially used for code injection
+- Install script now errors when no SHA hashing tool available
+- Install and uninstall scripts now refuse to install under root
+
+### Fixed
+
+- Removed potential command injection on bash completion helper
+- Resolution of user's home directory when executed using sudo
+- Improved symlink contaminated checks for store directory lookup
+- Buffer fix for output on failed parse entry
+- Repetitive code for store entry iterator
+- Release workflow direct interpolation
+
+## 0.2.4 - 2026-06-11
 
 ### Fixed
 

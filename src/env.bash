@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.2.4"
+readonly VERSION="0.2.5"
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -111,13 +111,15 @@ _fzf_select_entry() {
     | fzf "${fzf_args[@]}"
 }
 
-# Resolve a pass entry path, falling back to fzf when not found directly.
+# Resolve a pass entry path, falling back to fzf when no candidate is given.
 #
 # If the candidate is non-empty and names a valid .env entry on disk, prints
-# it and returns immediately. Otherwise launches _fzf_select_entry, optionally
-# pre-seeded with the candidate as a query string. Enforces the requirement
-# that all entry names end in .env and rejects absolute paths and any path
-# component containing '..' to prevent directory traversal outside the store.
+# it and returns immediately. If the candidate is non-empty but not found,
+# exits with an error. Only when the candidate is empty (no argument provided)
+# does it launch _fzf_select_entry for interactive selection. Enforces the
+# requirement that all entry names end in .env and rejects absolute paths and
+# any path component containing '..' to prevent directory traversal outside
+# the store.
 #
 # Arguments:
 #   $1 - Candidate entry path (optional; triggers fzf if empty or not found)
@@ -178,7 +180,8 @@ Notes:
     Blank lines and lines beginning with # are ignored.
   - `list` prints all .env entries available in the password store.
   - `run`   loads vars into the subprocess only; nothing leaks to the
-    calling shell (safest option):
+    calling shell.  Provides isolation and cleanup, but does not protect
+    against a compromised store:
               pass env run os/prod.env -- printenv MY_VAR
               pass env run e1.env e2.env -- myapp
   - `set` / `unset` print shell statements; eval them to modify the current

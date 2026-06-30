@@ -1,4 +1,4 @@
-.TH pass-env 1 "2026 June 11" "Version 0.2.4" "User Commands"
+.TH pass-env 1 "2026 June 30" "Version 0.2.5" "User Commands"
 
 .SH NAME
 pass-env \- a password-store extension to manage environment variables from encrypted .env entries
@@ -59,8 +59,11 @@ suffix), sorted alphabetically.
 Decrypt one or more entries and execute
 .I COMMAND
 with the resulting variables set in its environment.  Nothing is written to
-disk and no variable leaks into the calling shell.  This is the safest way to
-pass secrets to a subprocess.
+disk and no variable leaks into the calling shell.  This mode provides
+isolation and cleanup (variables are scoped to the subprocess), but does not
+protect against a compromised store: a tampered entry can still set dangerous
+variables like
+.BR PATH " or " LD_PRELOAD " to hijack the spawned process."
 .PP
 .RS
 .EX
@@ -173,6 +176,8 @@ Nothing leaks into the current shell.
 This is a convenience wrapper around
 .B pass env run
 for users who have sourced the shell function.
+It provides isolation and cleanup but does not protect against a compromised
+store.
 If no
 .I ENTRY
 is given before
@@ -226,10 +231,21 @@ Blank lines are ignored.
 .IP \(bu 4
 Lines beginning with
 .B #
-are treated as comments and ignored.
+are treated as comments and ignored. Only lines with
+.B #
+in column 0 are recognized as comments; leading whitespace before
+.B #
+will cause a parse error.
 .IP \(bu 4
 Key names must match
 .B ^[A-Za-z_][A-Za-z0-9_]*$
+.IP \(bu 4
+Well-known dangerous environment variables (e.g.,
+.BR PATH ,
+.BR LD_PRELOAD ,
+.BR PROMPT_COMMAND ,
+.BR BASH_ENV )
+are refused as defense-in-depth against a compromised store.
 .IP \(bu 4
 Entry filenames must end in
 .B .env
@@ -241,6 +257,51 @@ Values cannot span multiple lines.
 Newlines within values are not supported; a line that does not match
 .I KEY=VALUE
 format triggers an error.
+.IP \(bu 4
+Symlinked entries are supported.  A symlink inside the store that resolves
+outside the store will be rejected.
+
+.SH SECURITY
+
+The security of pass-env is bounded by the integrity of your GPG key and
+password store.  If an attacker can write to an entry in your password store
+(via a compromised GPG key, a shared store, or a symlink attack), they can
+inject arbitrary environment variables or execute commands when you load that
+entry.
+
+Both
+.BR "pass env set" " and " "pass env run"
+are affected by a compromised store.  The
+.B set
+subcommand evaluates entry content as shell code, while
+.B run
+exports variables directly into a subprocess.  A malicious entry can set
+dangerous variables like
+.BR PATH " or " LD_PRELOAD
+to hijack the spawned process.
+
+.B "pass env run"
+avoids
+.B eval
+and scopes variables to a subshell (nothing leaks into the calling shell),
+but it does not protect against a hostile store.  Its advantage is cleanup
+and isolation, not immunity to tampered entries.
+
+To reduce risk, pass-env refuses to set well-known dangerous environment
+variables (e.g.,
+.BR PATH ,
+.BR LD_PRELOAD ,
+.BR PROMPT_COMMAND ,
+.BR BASH_ENV )
+from entries.  This is defense-in-depth and not a substitute for store
+integrity.
+
+Decrypted pass entry content is held as a bash variable during parsing.
+Bash provides no mechanism to zero memory on
+.BR unset .
+On Linux, the decrypted values remain in the process's virtual memory until
+reclaimed and are readable by same-user processes via
+.IR /proc/<pid>/mem .
 
 .SH ENVIRONMENT
 
