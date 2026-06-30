@@ -32,26 +32,28 @@ __pass_env_list_entries() {
 
 # Append entry completions for the current token to COMPREPLY.
 #
-# Feeds all store entries through compgen so that partial path components
-# are respected (e.g. `os/` narrows to entries under that prefix).
+# Iterates over all store entries and performs a literal prefix match
+# against the current token. Does NOT use compgen -W, which would perform
+# shell expansion on each candidate, an attacker who can write to the
+# password store could embed $() or backticks in an entry filename and
+# trigger command injection on a single TAB press.
 #
 # Arguments:
-#   $1 - Current token being completed (forwarded to compgen)
+#   $1 - Current token being completed
 # Globals:
 #   COMPREPLY - appended with matching entries
 # Returns:
 #   0 always
 __pass_env_complete_entries() {
-  local cur="$1"
-  local IFS=$'\n'
-  local -a all
-  all=( $(__pass_env_list_entries) )
+  local cur="$1" entry
   # Disable filename path-stripping: pass is registered with `complete -o filenames`
   # which causes bash to strip directory components from COMPREPLY entries.
   # compopt +o filenames overrides that for this completion so full paths like
   # github/pat.env are preserved as-is.
   compopt +o filenames 2>/dev/null
-  COMPREPLY+=( $(compgen -W "${all[*]}" -- "$cur") )
+  while IFS= read -r entry; do
+    [[ "$entry" == "$cur"* ]] && COMPREPLY+=( "$entry" )
+  done < <(__pass_env_list_entries)
 }
 
 # Main bash completion function for `pass env`.

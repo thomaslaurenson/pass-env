@@ -27,6 +27,12 @@ setup() {
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
+teardown() {
+  rm -f "${PASSWORD_STORE_DIR}/evil.env.gpg"
+  rm -f "${PASSWORD_STORE_DIR}/escape_list.env.gpg"
+  rm -rf "${PASSWORD_STORE_DIR}/subdir"
+}
+
 # Dispatcher
 
 @test "help: exits 0 and prints usage" {
@@ -227,6 +233,83 @@ setup() {
   [[ "$output" =~ "symlinked.env" ]]
 }
 
+# Canonical path verification (symlink escape prevention)
+
+@test "set: accepts symlink that resolves within the store" {
+  # symlinked.env.gpg -> myentry.env.gpg (both inside the fixture store)
+  run bash "$ENV_BASH" set symlinked.env
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "export MY_VAR=" ]]
+}
+
+@test "set: rejects symlink that escapes the store" {
+  # Create a symlink inside the store that points outside to /etc/hosts
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hosts "${evil}"
+  run bash "$ENV_BASH" set evil.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "run: rejects symlink that escapes the store" {
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hosts "${evil}"
+  run bash "$ENV_BASH" run evil.env -- true
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "unset: rejects symlink that escapes the store" {
+  local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
+  ln -sf /etc/hosts "${evil}"
+  run bash "$ENV_BASH" unset evil.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -f "${evil}"
+}
+
+@test "set: rejects symlink via subdirectory that escapes the store" {
+  # Create a subdirectory with a symlink pointing outside
+  mkdir -p "${PASSWORD_STORE_DIR}/subdir"
+  ln -sf /etc/hosts "${PASSWORD_STORE_DIR}/subdir/escape.env.gpg"
+  run bash "$ENV_BASH" set subdir/escape.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
+  rm -rf "${PASSWORD_STORE_DIR}/subdir"
+}
+
+# list_entries: symlink filtering
+
+@test "list: excludes symlinks that escape the store" {
+  # Create a symlink inside the store that points outside
+  local evil="${PASSWORD_STORE_DIR}/escape_list.env.gpg"
+  ln -sf /etc/hosts "${evil}"
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  # The escaping symlink should NOT appear in the listing
+  ! [[ "$output" =~ "escape_list.env" ]]
+  rm -f "${evil}"
+}
+
+@test "list: still includes valid symlinks within the store" {
+  # symlinked.env.gpg -> myentry.env.gpg (both inside the fixture store)
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "symlinked.env" ]]
+}
+
+@test "list: excludes dangling symlinks" {
+  # Create a dangling symlink (target doesn't exist)
+  local dangling="${PASSWORD_STORE_DIR}/dangling.env.gpg"
+  ln -sf /nonexistent/path/file.env "${dangling}"
+  run bash "$ENV_BASH" list
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "dangling.env" ]]
+  rm -f "${dangling}"
+}
+
 # IFS-safe unset output
 
 @test "unset: output is correct regardless of IFS value" {
@@ -264,7 +347,7 @@ setup() {
   local tmpbin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$tmpbin"
   ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
-  run env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" run -- printenv MY_VAR
+  run --separate-stderr env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" run -- printenv MY_VAR
   [ "$status" -eq 0 ]
   [[ "$output" == "myvalue" ]]
 }

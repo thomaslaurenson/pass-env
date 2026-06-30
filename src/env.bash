@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.2.4"
+readonly VERSION="0.2.5"
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -20,6 +20,53 @@ readonly VERSION="0.2.4"
 # Returns:
 #   exits 1 (does not return to the caller)
 die() { printf 'pass env: %s\n' "$*" >&2; exit 1; }
+
+# Verify that a .gpg file's canonical (symlink-resolved) path stays within
+# the password store directory. Prevents symlink attacks where a .gpg file
+# inside the store points to arbitrary files outside the store.
+#
+# Arguments:
+#   $1 - Path to the .gpg file (absolute)
+#   $2 - Password store directory (absolute)
+# Returns:
+#   0 if the resolved path is within the store
+#   1 if the resolved path escapes the store or cannot be resolved
+_is_entry_in_store() {
+  local gpg_file="$1"
+  local password_store_dir="$2"
+  local real_file real_store
+  real_file="$(realpath -- "${gpg_file}")" || return 1
+  real_store="$(realpath -- "${password_store_dir}")" || return 1
+  # The trailing / prevents prefix false positives (e.g. /store/foo matching /store_foo/bar).
+  [[ "${real_file}" == "${real_store}/"* ]]
+}
+
+# Check whether a variable name is dangerous to set from an untrusted entry.
+#
+# Some environment variables cause code execution or change interpreter
+# behaviour simply by being set (e.g. PATH hijacks binary resolution,
+# LD_PRELOAD injects shared objects, PROMPT_COMMAND runs before each prompt).
+# A denylist is never complete, but it blocks the most common attack vectors.
+#
+# Arguments:
+#   $1 - Variable name to check
+# Returns:
+#   0 if the name is dangerous
+#   1 if the name is safe
+_is_dangerous_var() {
+  case "$1" in
+    PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|\
+    PROMPT_COMMAND|PS1|PS2|PS3|PS4|\
+    GLOBIGNORE|RANDOM|LINENO|PIPESTATUS|DIRSTACK)
+      return 0 ;;
+    LD_*|DYLD_*)
+      return 0 ;;
+    PYTHONPATH|PERL5LIB|RUBYLIB|NODE_OPTIONS)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
 
 # Present an interactive fzf picker of all .env entries in the password store.
 #
@@ -54,19 +101,25 @@ _fzf_select_entry() {
   [[ -d "${password_store_dir}" ]] \
     || die "password store not found: ${password_store_dir} (has pass been initialised?)"
   find "${password_store_dir}" -name "*.env.gpg" \( -type f -o -type l \) \
-    | while IFS= read -r f; do printf '%s\n' "${f#"${password_store_dir}/"}"; done \
+    | while IFS= read -r f; do
+      # Skip symlinks that resolve outside the password store.
+      _is_entry_in_store "${f}" "${password_store_dir}" || continue
+      printf '%s\n' "${f#"${password_store_dir}/"}"
+    done \
     | sed 's/\.gpg$//' \
     | sort \
     | fzf "${fzf_args[@]}"
 }
 
-# Resolve a pass entry path, falling back to fzf when not found directly.
+# Resolve a pass entry path, falling back to fzf when no candidate is given.
 #
 # If the candidate is non-empty and names a valid .env entry on disk, prints
-# it and returns immediately. Otherwise launches _fzf_select_entry, optionally
-# pre-seeded with the candidate as a query string. Enforces the requirement
-# that all entry names end in .env and rejects absolute paths and any path
-# component containing '..' to prevent directory traversal outside the store.
+# it and returns immediately. If the candidate is non-empty but not found,
+# exits with an error. Only when the candidate is empty (no argument provided)
+# does it launch _fzf_select_entry for interactive selection. Enforces the
+# requirement that all entry names end in .env and rejects absolute paths and
+# any path component containing '..' to prevent directory traversal outside
+# the store.
 #
 # Arguments:
 #   $1 - Candidate entry path (optional; triggers fzf if empty or not found)
@@ -87,7 +140,11 @@ _resolve_entry() {
     # directory traversal outside PASSWORD_STORE_DIR.
     [[ "${candidate}" == /* || "${candidate}" == *..* ]] && \
       die "invalid entry path (no traversal allowed): ${candidate}"
-    if [[ -f "${password_store_dir}/${candidate}.gpg" ]]; then
+    local gpg_file="${password_store_dir}/${candidate}.gpg"
+    if [[ -f "${gpg_file}" ]]; then
+      if ! _is_entry_in_store "${gpg_file}" "${password_store_dir}"; then
+        die "entry path escapes password store (symlink): ${candidate}"
+      fi
       printf '%s\n' "${candidate}"
       return
     fi
@@ -123,7 +180,8 @@ Notes:
     Blank lines and lines beginning with # are ignored.
   - `list` prints all .env entries available in the password store.
   - `run`   loads vars into the subprocess only; nothing leaks to the
-    calling shell (safest option):
+    calling shell.  Provides isolation and cleanup, but does not protect
+    against a compromised store:
               pass env run os/prod.env -- printenv MY_VAR
               pass env run e1.env e2.env -- myapp
   - `set` / `unset` print shell statements; eval them to modify the current
@@ -166,9 +224,42 @@ list_entries() {
     || die "password store not found: ${password_store_dir} (has pass been initialised?)"
 
   find "${password_store_dir}" -name "*.env.gpg" \( -type f -o -type l \) \
-    | while IFS= read -r f; do printf '%s\n' "${f#"${password_store_dir}/"}"; done \
+    | while IFS= read -r f; do
+      # Skip symlinks that resolve outside the password store.
+      _is_entry_in_store "${f}" "${password_store_dir}" || continue
+      printf '%s\n' "${f#"${password_store_dir}/"}"
+    done \
     | sed 's/\.gpg$//' \
     | sort
+}
+
+# Iterate over each validated variable in a decrypted pass entry, calling a
+# callback for every KEY=VALUE pair. All parsing, validation, and denylist
+# checks happen here in one place, callers only provide the emit action.
+#
+# Arguments:
+#   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
+#   $2 - Callback function name; called as "$callback" "$key" "$val"
+# Returns:
+#   0 on success, exits 1 on decryption failure, invalid key name, dangerous
+#   variable, or unsupported line format
+_entry_for_each_var() {
+  local entry="$1" callback="$2"
+  local content key val line
+  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
+  while IFS= read -r line; do
+    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
+    [[ -z "${line}" ]] && continue
+    case "${line}" in \#*) continue ;; esac
+    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
+      _is_dangerous_var "${key}" && die "refusing to set sensitive variable from entry: ${key}"
+      "${callback}" "${key}" "${val}"
+    else
+      die "unsupported line format in ${entry} (expected KEY=VALUE)"
+    fi
+  done <<< "${content}"
 }
 
 # Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
@@ -176,6 +267,9 @@ list_entries() {
 # Each non-blank, non-comment line must be in KEY=VALUE format. Key names are
 # validated against ^[A-Za-z_][A-Za-z0-9_]*$. Values are shell-quoted with
 # printf %q so the output is safe to eval or source directly.
+#
+# Output is buffered: nothing is emitted until the entire entry parses
+# successfully, so a malformed line produces no partial output.
 #
 # Arguments:
 #   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
@@ -186,20 +280,15 @@ list_entries() {
 #   0 on success
 #   exits 1 on decryption failure, invalid key name, or unsupported line format
 _parse_entry() {
-  local entry="$1" content key val
-  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
-  while IFS= read -r line; do
-    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
-    [[ -z "${line}" ]] && continue
-    case "${line}" in \#*) continue ;; esac
-    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
-      printf '%s=%q\n' "${key}" "${val}"
-    else
-      die "unsupported line format in ${entry} (expected KEY=VALUE)"
-    fi
-  done <<< "${content}"
+  local _parse_entry_buf=""
+  _entry_for_each_var "$1" _parse_entry_buf_emit
+  printf '%s\n' "${_parse_entry_buf}"
+}
+
+# Callback for _parse_entry: buffer KEY=%q lines instead of emitting immediately.
+_parse_entry_buf_emit() {
+  _parse_entry_buf="${_parse_entry_buf}${_parse_entry_buf:+
+}$(printf '%s=%q' "$1" "$2")"
 }
 
 # Export all variables from a pass entry directly into the current (sub)shell.
@@ -215,20 +304,12 @@ _parse_entry() {
 #   0 on success, exits 1 on decryption failure, invalid key name, or
 #   unsupported line format
 _export_entry() {
-  local entry="$1" content key val
-  content="$(pass show -- "${entry}")" || die "unable to show entry: ${entry}"
-  while IFS= read -r line; do
-    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
-    [[ -z "${line}" ]] && continue
-    case "${line}" in \#*) continue ;; esac
-    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid variable name in ${entry}: ${key}"
-      export "${key}=${val}"
-    else
-      die "unsupported line format in ${entry} (expected KEY=VALUE)"
-    fi
-  done <<< "${content}"
+  _entry_for_each_var "$1" _export_entry_emit
+}
+
+# Callback for _export_entry: export KEY=VALUE directly.
+_export_entry_emit() {
+  export "$1=$2"
 }
 
 # Execute a command with environment variables from one or more pass entries.

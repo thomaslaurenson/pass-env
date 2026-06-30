@@ -23,9 +23,9 @@ brew install pass fzf
 
 ## Installation
 
-### Verified Install (Recommended)
+### Inspect Before Running
 
-Download the installer and its published checksum, verify the hash, inspect the script, then run it:
+Download the installer, optionally verify its checksum against the published release (this protects against accidental transport corruption, not against a compromised release), inspect the script, then run it:
 
 ```sh
 BASE_URL="https://github.com/thomaslaurenson/pass-env/releases/latest/download"
@@ -53,7 +53,7 @@ For a user-local install with no `sudo`, pass the `--user` argument:
 curl -fsSL https://github.com/thomaslaurenson/pass-env/releases/latest/download/install.sh | bash -s -- --user
 ```
 
-> **Note:** When piped directly to bash, the installer runs without giving you a chance to verify its contents. Use the recommended path in the section above if you require pre-execution integrity checking.
+> **Note:** When piped directly to bash, the installer runs without giving you a chance to inspect its contents first. The installer performs an automatic checksum verification against the published release (protecting against transport corruption). Download and review the script manually if you want to inspect it before running.
 
 There are a selection of other install options, including:
 
@@ -63,6 +63,7 @@ There are a selection of other install options, including:
 - `--no-init`: Do not install shell initialization helper scripts
 - `--no-uninstall`: Do not install pass env uninstaller
 - `--dry-run`: Show what operations would be done
+- `--skip-checksum`: Skip tarball checksum verification
 
 ## Pass Entry Example
 
@@ -141,13 +142,15 @@ See `man pass-env` for full documentation.
 
 ## Security Notes
 
-### Eval Trust Boundary
+### Trust Boundary
 
-`passenv set` and `eval "$(pass env set ...)"` execute the decrypted entry content as shell code. If an attacker can write to an entry in your password store, via a compromised GPG key, a shared store, or a symlink attack - they can execute arbitrary commands in your shell the next time you load that entry.
+The security of `passenv` is bounded by the integrity of your GPG key and password store. If an attacker can write to an entry in your password store - via a compromised GPG key, a shared store, or a symlink attack - they can inject arbitrary environment variables or execute commands when you load that entry.
 
-The security of `passenv set` is bounded by the security of your GPG key and password store. It is not stronger than that.
+Both `passenv set` and `pass env run` are affected by a compromised store. The `set` subcommand evaluates entry content as shell code, while `run` exports variables directly into a subprocess, a malicious entry can still set dangerous variables like `PATH` or `LD_PRELOAD` to hijack the spawned process.
 
-If you need to run a single command with secrets and want to avoid the eval trust boundary entirely, use `pass env run`, it never evals entry content into a shell.
+`pass env run` avoids `eval` and scopes variables to a subshell (nothing leaks into the calling shell), but it does not protect against a hostile store. Its advantage is cleanup and isolation, not immunity to tampered entries.
+
+To reduce risk, `passenv` refuses to set well-known dangerous environment variables (e.g. `PATH`, `LD_PRELOAD`, `PROMPT_COMMAND`, `BASH_ENV`) from entries. This is defense-in-depth and not a substitute for store integrity.
 
 ### Session-Local Tracker
 
