@@ -341,12 +341,7 @@ setup() {
   local tmpbin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$tmpbin"
   ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
-  echo "DEBUG: fzf resolved=$(env "PATH=$tmpbin:$PATH" bash -c 'command -v fzf')" >&3
-  echo "DEBUG: mock_fzf direct=$(env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" fzf)" >&3
   run --separate-stderr env "PATH=$tmpbin:$PATH" "MOCK_FZF_OUTPUT=myentry.env" bash "$ENV_BASH" run -- printenv MY_VAR
-  echo "DEBUG: status=$status" >&3
-  echo "DEBUG: stdout='$output'" >&3
-  echo "DEBUG: stderr='$stderr'" >&3
   [ "$status" -eq 0 ]
   [[ "$output" == "myvalue" ]]
 }
