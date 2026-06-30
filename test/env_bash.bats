@@ -27,6 +27,12 @@ setup() {
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
+teardown() {
+  rm -f "${PASSWORD_STORE_DIR}/evil.env.gpg"
+  rm -f "${PASSWORD_STORE_DIR}/escape_list.env.gpg"
+  rm -rf "${PASSWORD_STORE_DIR}/subdir"
+}
+
 # Dispatcher
 
 @test "help: exits 0 and prints usage" {
@@ -237,9 +243,9 @@ setup() {
 }
 
 @test "set: rejects symlink that escapes the store" {
-  # Create a symlink inside the store that points outside to /etc/hostname
+  # Create a symlink inside the store that points outside to /etc/hosts
   local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
-  ln -sf /etc/hostname "${evil}"
+  ln -sf /etc/hosts "${evil}"
   run bash "$ENV_BASH" set evil.env
   [ "$status" -ne 0 ]
   [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
@@ -248,7 +254,7 @@ setup() {
 
 @test "run: rejects symlink that escapes the store" {
   local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
-  ln -sf /etc/hostname "${evil}"
+  ln -sf /etc/hosts "${evil}"
   run bash "$ENV_BASH" run evil.env -- true
   [ "$status" -ne 0 ]
   [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
@@ -257,7 +263,7 @@ setup() {
 
 @test "unset: rejects symlink that escapes the store" {
   local evil="${PASSWORD_STORE_DIR}/evil.env.gpg"
-  ln -sf /etc/hostname "${evil}"
+  ln -sf /etc/hosts "${evil}"
   run bash "$ENV_BASH" unset evil.env
   [ "$status" -ne 0 ]
   [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
@@ -267,7 +273,7 @@ setup() {
 @test "set: rejects symlink via subdirectory that escapes the store" {
   # Create a subdirectory with a symlink pointing outside
   mkdir -p "${PASSWORD_STORE_DIR}/subdir"
-  ln -sf /etc/hostname "${PASSWORD_STORE_DIR}/subdir/escape.env.gpg"
+  ln -sf /etc/hosts "${PASSWORD_STORE_DIR}/subdir/escape.env.gpg"
   run bash "$ENV_BASH" set subdir/escape.env
   [ "$status" -ne 0 ]
   [[ "$output" =~ "escapes password store" || "$output" =~ "symlink" ]]
@@ -279,7 +285,7 @@ setup() {
 @test "list: excludes symlinks that escape the store" {
   # Create a symlink inside the store that points outside
   local evil="${PASSWORD_STORE_DIR}/escape_list.env.gpg"
-  ln -sf /etc/hostname "${evil}"
+  ln -sf /etc/hosts "${evil}"
   run bash "$ENV_BASH" list
   [ "$status" -eq 0 ]
   # The escaping symlink should NOT appear in the listing

@@ -56,7 +56,7 @@ lint: ## Run shellcheck and bash -n on all scripts
 # TEST
 .PHONY: test
 test: ## Run bats test suite and zsh integration test
-	test/extern/bats/bin/bats --trace test/env_bash.bats test/pass_env_init_sh.bats
+	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
 	@printf 'zsh integration  contrib/pass-env-init.sh ... '
 	@zsh test/zsh_integration.zsh \
 	  && printf 'ok\n' \
