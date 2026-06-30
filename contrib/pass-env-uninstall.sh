@@ -260,6 +260,24 @@ strip_rc_block() {
 main() {
   [[ $# -gt 0 ]] && error "This script takes no arguments. Run with no flags."
 
+  # When run under sudo, HOME is typically /root (due to env_reset/always_set_home).
+  # Resolve the invoking user's home so RC file cleanup targets the right files.
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+    local sudo_home
+    sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6)" || \
+      sudo_home="$(eval echo "~${SUDO_USER}" 2>/dev/null)" || \
+      sudo_home=""
+    if [[ -n "${sudo_home}" ]]; then
+      warn "Running under sudo as user ${SUDO_USER}; using ${sudo_home} for shell integration cleanup."
+      HOME="${sudo_home}"
+    else
+      error "Cannot determine home directory for user ${SUDO_USER}.
+  Run without sudo: bash $0"
+    fi
+  elif [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    warn "Running as root. Shell integration will be removed from /root's RC files."
+  fi
+
   _OS="$(detect_os)"
   local os="$_OS"
 

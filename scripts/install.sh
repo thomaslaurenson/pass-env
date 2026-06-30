@@ -714,6 +714,24 @@ show_summary() {
 main() {
   parse_args "$@"
 
+  # When run under sudo, HOME is typically /root (due to env_reset/always_set_home).
+  # Resolve the invoking user's home so shell integration targets the right RC files.
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+    local sudo_home
+    sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6)" || \
+      sudo_home="$(eval echo "~${SUDO_USER}" 2>/dev/null)" || \
+      sudo_home=""
+    if [[ -n "${sudo_home}" ]]; then
+      warn "Running under sudo as user ${SUDO_USER}; using ${sudo_home} for shell integration."
+      HOME="${sudo_home}"
+    else
+      error "Cannot determine home directory for user ${SUDO_USER}.
+  Run without sudo: bash install.sh $*"
+    fi
+  elif [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    warn "Running as root. Shell integration will be installed into /root's RC files."
+  fi
+
   check_pass_installed
 
   local os
