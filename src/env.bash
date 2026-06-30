@@ -265,6 +265,9 @@ _entry_for_each_var() {
 # validated against ^[A-Za-z_][A-Za-z0-9_]*$. Values are shell-quoted with
 # printf %q so the output is safe to eval or source directly.
 #
+# Output is buffered: nothing is emitted until the entire entry parses
+# successfully, so a malformed line produces no partial output.
+#
 # Arguments:
 #   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
 # Outputs:
@@ -274,12 +277,15 @@ _entry_for_each_var() {
 #   0 on success
 #   exits 1 on decryption failure, invalid key name, or unsupported line format
 _parse_entry() {
-  _entry_for_each_var "$1" _parse_entry_emit
+  local _parse_entry_buf=""
+  _entry_for_each_var "$1" _parse_entry_buf_emit
+  printf '%s\n' "${_parse_entry_buf}"
 }
 
-# Callback for _parse_entry: emit KEY=%q to stdout.
-_parse_entry_emit() {
-  printf '%s=%q\n' "$1" "$2"
+# Callback for _parse_entry: buffer KEY=%q lines instead of emitting immediately.
+_parse_entry_buf_emit() {
+  _parse_entry_buf="${_parse_entry_buf}${_parse_entry_buf:+
+}$(printf '%s=%q' "$1" "$2")"
 }
 
 # Export all variables from a pass entry directly into the current (sub)shell.
