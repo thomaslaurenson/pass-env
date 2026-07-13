@@ -96,6 +96,14 @@ Export OpenStack and Tenable creds and run custom Python script in subshell:
 pass env run openstack.env tenable.env -- python3 check_vulns.py
 ```
 
+To use an entry's variables as *arguments* to the command, write `{{VAR}}` (a
+bare `$VAR` cannot work — see
+[Passing Variables to Commands](#passing-variables-to-commands)):
+
+```sh
+pass env run api/openai.env -- openai responses create --model {{SPARK_MODEL}}
+```
+
 ### Passenv wrapper
 
 In Linux a subprocess cannot modify its parent's environment, so the raw `pass env` extension is limited when performing interative work. For example, setting (exporting) variables in the current shell and persisting them. Therefore, the `passenv` wrapper is provided to execute `pass env` and `eval` to persist in current shell. `passenv` is the shell function from `contrib/pass-env-init.sh` that handles the `eval` for you and tracks loaded entries in `_PASSENV_TRACKER`. It is installed and sourced into your RC files by default. Rule of thumb: **Use `passenv` for all interactive shell work.**.
@@ -123,7 +131,9 @@ passenv: loaded openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CR
 passenv: db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 ```
 
-Use `unset` subcommand to remove vars from a single entry:
+When multiple entries define the same variable, later entries override earlier ones.
+
+Use `unset` subcommand to remove vars from a single entry. Variables are restored to their pre-load state: the previous value is re-exported, or the variable is unset if it did not exist before loading:
 
 ```sh
 passenv unset openstack.env
@@ -138,6 +148,65 @@ passenv: unset openstack.env → OS_APPLICATION_CREDENTIAL_ID OS_APPLICATION_CRE
 passenv: unset db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 ```
 
+## Passing Variables to Commands
+
+### Using entry variables as command arguments
+
+A variable that lives *inside* an entry cannot be referenced as `$VAR` on a
+`run` command line:
+
+```sh
+# WRONG: your shell expands $SPARK_MODEL to "" before pass ever runs
+pass env run api/openai.env -- openai responses create --model $SPARK_MODEL --input "what is a cat?"
+# -> openai sees: --model --input "what is a cat?"
+```
+
+This is shell expansion order, not a pass-env quirk: the substitution happens
+at the call site, before the entry has been loaded.
+
+Write `{{VAR}}` instead. It is inert to both bash and zsh (brace expansion
+needs a comma or a `..` range), so it survives your shell unquoted and is
+substituted once the entry is loaded:
+
+```sh
+pass env run api/openai.env -- openai responses create --model {{SPARK_MODEL}} --input "what is a cat?"
+```
+
+Only names supplied by the named entries (or by a `VAR=VALUE` assignment, see
+below) are substituted. Any other `{{...}}` text — a Handlebars or Jinja
+template, say — is left exactly as written. If you need to be certain nothing
+is touched, pass `--no-expand`:
+
+```sh
+pass env run --no-expand api/openai.env -- render-template '{{SPARK_MODEL}}'
+```
+
+Substitution uses parameter expansion only, never `eval`, and the result is
+never re-parsed or re-split. A value containing spaces or shell metacharacters
+arrives as a single inert argument, not as executable code.
+
+### Setting variables for the command
+
+A leading `VAR=VALUE` before the command sets that variable for the command,
+overriding the entry, exactly as in a normal shell:
+
+```sh
+pass env run api/openai.env -- LOG_LEVEL=debug myapp
+```
+
+These come from you rather than from the store, so the denylist that guards
+entry content does not apply to them — a shell would not second-guess them
+either. They can also be referenced as `{{VAR}}` placeholders.
+
+Alternatively, load the entry into your shell for as long as you need it, and
+use the variables normally:
+
+```sh
+passenv set api/openai.env
+openai responses create --model $SPARK_MODEL --input "what is a cat?"
+passenv unset api/openai.env
+```
+
 See `man pass-env` for full documentation.
 
 ## Security Notes
@@ -150,7 +219,15 @@ Both `passenv set` and `pass env run` are affected by a compromised store. The `
 
 `pass env run` avoids `eval` and scopes variables to a subshell (nothing leaks into the calling shell), but it does not protect against a hostile store. Its advantage is cleanup and isolation, not immunity to tampered entries.
 
-To reduce risk, `passenv` refuses to set well-known dangerous environment variables (e.g. `PATH`, `LD_PRELOAD`, `PROMPT_COMMAND`, `BASH_ENV`) from entries. This is defense-in-depth and not a substitute for store integrity.
+To reduce risk, `passenv` refuses to set well-known dangerous environment variables (e.g. `PATH`, `HOME`, `LD_PRELOAD`, `PROMPT_COMMAND`, `BASH_ENV`, `FPATH`, `PYTHONSTARTUP`, `GIT_SSH_COMMAND`) from entries. This is defense-in-depth and not a substitute for store integrity.
+
+The denylist applies to entry *content*, which is untrusted. It deliberately does not apply to a `VAR=VALUE` assignment you type before the command (`pass env run e.env -- PATH=/custom myapp`): that comes from you, not the store, and a shell would not second-guess it either.
+
+### Argument Placeholder Substitution
+
+`{{VAR}}` placeholders in a command's arguments are substituted with parameter expansion only. There is no `eval`, and the substituted result is never re-parsed or re-split into words. A hostile entry value such as `; rm -rf ~` therefore arrives at the command as one inert argument string rather than as executable code.
+
+Substitution is limited to variable names actually supplied by the named entries or by a `VAR=VALUE` assignment, so unrelated `{{...}}` text passes through untouched. Use `--no-expand` to disable substitution entirely.
 
 ### Session-Local Tracker
 
