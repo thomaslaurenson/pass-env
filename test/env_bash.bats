@@ -15,13 +15,15 @@ bats_require_minimum_version 1.7.0
 #
 # Globals:
 #   BATS_TEST_DIRNAME - provided by bats
-#   PASSWORD_STORE_DIR, PASSENV_FIXTURE_CONTENT_DIR - exported
+#   PASSWORD_STORE_DIR, PASSENV_FIXTURE_CONTENT_DIR, PASS_ENV_SRC - exported
 #   ENV_BASH - set
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
   export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
   ENV_BASH="$REPO_ROOT/src/env.bash"
+  # mock_pass delegates 'pass env ...' to the real extension; tell it where.
+  export PASS_ENV_SRC="$ENV_BASH"
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   ln -sf "$REPO_ROOT/test/helpers/mock_pass" "$BATS_TEST_TMPDIR/bin/pass"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
@@ -400,4 +402,181 @@ teardown() {
   run env "PASSWORD_STORE_DIR=$spaced_dir" bash "$ENV_BASH" list
   [ "$status" -eq 0 ]
   [[ "$output" =~ "myentry.env" ]]
+}
+
+# Entry marker emission
+
+@test "set: emits an entry marker comment before the exports" {
+  run bash "$ENV_BASH" set myentry.env
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "# pass-env entry: myentry.env" ]]
+}
+
+@test "set: marker output is still eval-safe" {
+  eval "$(bash "$ENV_BASH" set myentry.env)"
+  [[ "$MY_VAR" == "myvalue" ]]
+}
+
+@test "set: no marker (no partial output) when the entry is malformed" {
+  run bash "$ENV_BASH" set badformat.env
+  [ "$status" -ne 0 ]
+  ! [[ "$output" =~ "# pass-env entry" ]]
+}
+
+# Traversal check precision
+
+@test "set: accepts an entry name containing '..' that is not a path component" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/a..b.env"
+  printf 'DOTDOT_VAR=ok\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/a..b.env.gpg"
+  run bash "$ENV_BASH" set a..b.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/a..b.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "export DOTDOT_VAR=" ]]
+}
+
+# Expanded denylist
+
+@test "set: refuses to set HOME from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_home.env"
+  printf 'HOME=/tmp/evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_home.env.gpg"
+  run bash "$ENV_BASH" set danger_home.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_home.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set GIT_SSH_COMMAND from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_git.env"
+  printf 'GIT_SSH_COMMAND=evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_git.env.gpg"
+  run bash "$ENV_BASH" run danger_git.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_git.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+# Command after -- : leading VAR=value assignment prefix
+
+@test "run: honors a leading VAR=value assignment before the command" {
+  # Mirrors the real report: `run entry.env -- PASS=password openai ...`.
+  # The assignment is the first token after --; a bare exec would treat
+  # 'FROMCMD=fromcmd' as the program name and fail.
+  run bash "$ENV_BASH" run myentry.env -- FROMCMD=fromcmd printenv FROMCMD
+  [ "$status" -eq 0 ]
+  [[ "$output" == "fromcmd" ]]
+}
+
+@test "run: assignment prefix does not stop entry vars from reaching the command" {
+  # PASS=... prefixes the command; MY_VAR comes from the entry. Both must be visible.
+  run bash "$ENV_BASH" run myentry.env -- PASS=secret bash -c 'printf "%s %s" "$PASS" "$MY_VAR"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "secret myvalue" ]]
+}
+
+@test "run: preserves a quoted argument containing a space" {
+  run bash "$ENV_BASH" run myentry.env -- printf '[%s]' "test prompt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "[test prompt]" ]]
+}
+
+@test "run: preserves the command's own -- argument" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s\n' -- foo
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'--\nfoo' ]]
+}
+
+# run: {{VAR}} argument placeholders
+
+@test "run: substitutes a {{VAR}} placeholder from the entry" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s' '{{MY_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue" ]]
+}
+
+@test "run: substitutes a placeholder embedded in a larger argument" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s' 'x-{{MY_VAR}}-y'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "x-myvalue-y" ]]
+}
+
+@test "run: substitutes multiple placeholders across arguments" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s|%s' '{{MY_VAR}}' '{{MY_OTHER}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue|othervalue" ]]
+}
+
+@test "run: leaves {{...}} untouched when the name is not supplied by the entry" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s' 'Hello {{user_name}}!'
+  [ "$status" -eq 0 ]
+  [[ "$output" == 'Hello {{user_name}}!' ]]
+}
+
+@test "run: leaves unbalanced braces untouched" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s' '{{MY_VAR'
+  [ "$status" -eq 0 ]
+  [[ "$output" == '{{MY_VAR' ]]
+}
+
+@test "run: --no-expand leaves placeholders literal" {
+  run bash "$ENV_BASH" run --no-expand myentry.env -- printf '%s' '{{MY_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == '{{MY_VAR}}' ]]
+}
+
+@test "run: substituted values are inert, not re-evaluated (no injection)" {
+  # SEMI_VAR is literally 'val; echo INJECTED' in the fixture.
+  run bash "$ENV_BASH" run injection.env -- printf '%s' '{{SEMI_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == 'val; echo INJECTED' ]]
+}
+
+@test "run: placeholder value containing spaces stays a single argument" {
+  # SPECIAL_VAR is 'hello world'. It must arrive as ONE argument, not two:
+  # the substituted value is never re-split or re-parsed.
+  run bash "$ENV_BASH" run specialchars.env -- printf '[%s]' '{{SPECIAL_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == '[hello world]' ]]
+}
+
+# run: leading VAR=value assignments
+
+@test "run: assignment prefix overrides a variable from the entry" {
+  run bash "$ENV_BASH" run myentry.env -- MY_VAR=overridden printenv MY_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "overridden" ]]
+}
+
+@test "run: assignment prefix is usable as a {{VAR}} placeholder" {
+  run bash "$ENV_BASH" run myentry.env -- FROMCMD=fromcmd printf '%s' '{{FROMCMD}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "fromcmd" ]]
+}
+
+@test "run: multiple assignment prefixes are all applied" {
+  run bash "$ENV_BASH" run myentry.env -- A=1 B=2 sh -c 'printf "%s%s" "$A" "$B"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "12" ]]
+}
+
+@test "run: an assignment-looking argument after the command is left alone" {
+  run bash "$ENV_BASH" run myentry.env -- printf '%s' 'NOT=anassignment'
+  [ "$status" -eq 0 ]
+  [[ "$output" == 'NOT=anassignment' ]]
+}
+
+@test "run: errors when only assignments follow -- with no command" {
+  run bash "$ENV_BASH" run myentry.env -- FOO=bar
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "missing COMMAND" ]]
+}
+
+@test "run: substituted values are not themselves re-expanded" {
+  # A's value is the literal text '{{MY_VAR}}'. Substituting {{A}} must yield
+  # that text verbatim, not 'myvalue': expansion is a single pass, so a value
+  # can never smuggle in another placeholder.
+  run bash "$ENV_BASH" run myentry.env -- A='{{MY_VAR}}' printf '%s' '{{A}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == '{{MY_VAR}}' ]]
 }
