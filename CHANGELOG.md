@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.3.0 - 2026-07-02
+
+### Added
+
+- `pass env run` accepts `{{VAR}}` placeholders in the command's arguments,
+  substituted from the loaded entries after decryption. This makes an entry's
+  variables usable as command *arguments*, which a bare `$VAR` cannot do (the
+  calling shell expands it before `pass` runs, when the entry is not yet
+  loaded, so it collapses to an empty string). `{{VAR}}` is inert to bash and
+  zsh, so it needs no quoting:
+  `pass env run api.env -- myapp --model {{SPARK_MODEL}}`.
+  Only names supplied by the named entries or by a `VAR=VALUE` assignment are
+  substituted; all other `{{...}}` text is left as written. Substitution uses
+  parameter expansion only — never `eval` — and the result is not re-parsed or
+  re-split, so a hostile store value cannot inject code
+- `pass env run --no-expand` disables `{{VAR}}` substitution
+- A leading `VAR=VALUE` assignment before COMMAND sets that variable for the
+  command and overrides the entries, matching normal shell precedence
+- `pass env set` output now includes a `# pass-env entry: NAME` marker per
+  entry, so `passenv` tracks interactively (fzf) selected entries under their
+  real names, including multi-select
+- `passenv unset` restores variables to their pre-load values (previous value
+  re-exported, or unset if the variable did not exist before loading);
+  rollback on partial `passenv set` failure restores likewise
+- Install script writes an `install-manifest.txt`; the uninstaller removes
+  exactly the files listed in it (mirrored-path removal kept as fallback)
+- Expanded dangerous-variable denylist: `HOME`, `SHELL`, `FPATH`, `ZDOTDIR`,
+  `CDPATH`, `TMPDIR`, `GCONV_PATH`, `LOCPATH`, `TERMINFO`, pager/editor
+  variables, command-executing `GIT_*` variables, `PYTHONSTARTUP`,
+  `PYTHONHOME`, `PERL5OPT`, `RUBYOPT`, `NODE_PATH`, and Java options
+  variables
+
+### Fixed
+
+- `pass env run ENTRY -- VAR=value COMMAND ...` now honors a leading
+  `VAR=value` assignment before the command (e.g.
+  `run api.env -- PASS=secret openai ...`). Previously the bare `exec` treated
+  the assignment as the program name and failed with
+  `exec: VAR=value: not found`
+- Removed `--entry` from bash and zsh completions; the flag never existed and
+  selecting it produced an error
+- Install confirmation prompt reads from `/dev/tty`, fixing `curl | bash`
+  installs run without `--yes`
+- Replaced `mapfile` in the installer with a portable loop (macOS default
+  `/bin/bash` 3.2 lacks `mapfile`)
+- RC files created by the installer under `sudo` are now chowned to the
+  invoking user instead of being left root-owned
+- Pressing ESC in the fzf picker now prints "No entry selected." instead of
+  exiting silently
+- Traversal check now rejects only `..` path components rather than any `..`
+  substring, so names like `a..b.env` work
+- All extension functions and globals are namespaced (`_pass_env_*` /
+  `PASSENV_*`); extensions are sourced into the pass process and previously
+  shadowed pass's own `die()`
+
 ## 0.2.5 - 2026-06-30
 
 ### Added
