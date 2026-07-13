@@ -12,6 +12,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
 export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
+# mock_pass delegates 'pass env ...' to the real extension; tell it where.
+export PASS_ENV_SRC="$REPO_ROOT/src/env.bash"
 
 # Put mock_pass on PATH as 'pass', same pattern as bats setup().
 tmpbin="$(mktemp -d)"
@@ -44,6 +46,33 @@ fi
 passenv unset "myentry.env" >/dev/null
 if [[ -n "${_PASSENV_TRACKER[myentry.env]:-}" ]]; then
   printf 'FAIL: myentry.env still in tracker after passenv unset\n' >&2
+  exit 1
+fi
+
+# Test 4: passenv unset restores a pre-existing value (zsh snapshot path).
+export MY_VAR='previous !d+f$bn value'
+passenv set "myentry.env" >/dev/null
+if [[ "${MY_VAR}" != "myvalue" ]]; then
+  printf 'FAIL: MY_VAR not overwritten by passenv set\n' >&2
+  exit 1
+fi
+passenv unset "myentry.env" >/dev/null
+if [[ "${MY_VAR}" != 'previous !d+f$bn value' ]]; then
+  printf 'FAIL: MY_VAR not restored to pre-load value after unset (got: %s)\n' "${MY_VAR:-<unset>}" >&2
+  exit 1
+fi
+unset MY_VAR
+
+# Test 5: passenv unset removes a variable that did not exist before set.
+unset MY_OTHER 2>/dev/null || true
+passenv set "myentry.env" >/dev/null
+if [[ -z "${MY_OTHER:-}" ]]; then
+  printf 'FAIL: MY_OTHER not set by passenv set\n' >&2
+  exit 1
+fi
+passenv unset "myentry.env" >/dev/null
+if [[ -n "${MY_OTHER+x}" ]]; then
+  printf 'FAIL: MY_OTHER still set after passenv unset\n' >&2
   exit 1
 fi
 

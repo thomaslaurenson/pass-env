@@ -74,6 +74,12 @@ SKIP_CHECKSUM=false
 # instead of downloading a release tarball.
 LOCAL_SRC=""
 
+# Every file placed on disk by maybe_install() is appended here and written to
+# INIT_SCRIPT_DIR/install-manifest.txt at the end of the install, so the
+# uninstaller can remove exactly what was installed without mirroring path
+# resolution logic.
+INSTALLED_FILES=()
+
 # Set to true by detect_needs_enable_extensions() when PASSWORD_STORE_ENABLE_EXTENSIONS
 # must be exported for the installed extension to be visible to pass.
 NEEDS_ENABLE_EXTENSIONS=false
@@ -375,6 +381,38 @@ maybe_install() {
   else
     error "Cannot write to ${dest_dir} (check permissions, or use --system for a system install)"
   fi
+  INSTALLED_FILES+=("${dest}")
+}
+
+# Write the manifest of installed files to INIT_SCRIPT_DIR.
+#
+# The manifest lists one absolute path per line (including the manifest
+# itself) and is consumed by pass-env-uninstall.sh, which removes exactly
+# the listed files instead of relying on a mirrored copy of resolve_paths().
+#
+# Globals:
+#   INSTALLED_FILES - read; list of installed file paths
+#   INIT_SCRIPT_DIR - read; manifest destination directory
+#   DRY_RUN         - read; skips the write when true
+# Returns:
+#   0 always
+write_manifest() {
+  local manifest="${INIT_SCRIPT_DIR}/install-manifest.txt"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[dry-run] would write manifest: ${manifest}"
+    return 0
+  fi
+  local tmp_manifest
+  tmp_manifest="$(mktemp)"
+  {
+    if [[ ${#INSTALLED_FILES[@]} -gt 0 ]]; then
+      printf '%s\n' "${INSTALLED_FILES[@]}"
+    fi
+    printf '%s\n' "${manifest}"
+  } > "${tmp_manifest}"
+  maybe_install 0644 "${tmp_manifest}" "${manifest}"
+  rm -f "${tmp_manifest}"
+  added "${manifest}"
 }
 
 # Resolve the release version to install.
@@ -400,7 +438,7 @@ resolve_version() {
   # When running from a local clone, read VERSION directly from src/env.bash.
   if [[ -n "${LOCAL_SRC}" ]]; then
     local raw
-    raw="$(grep '^VERSION=' "${LOCAL_SRC}/src/env.bash" | sed -E 's/VERSION="(.*)"/\1/')"
+    raw="$(grep 'PASSENV_VERSION="' "${LOCAL_SRC}/src/env.bash" | head -1 | sed -E 's/.*PASSENV_VERSION="([^"]*)".*/\1/')"
     [[ -z "${raw}" ]] && error "Could not read VERSION from ${LOCAL_SRC}/src/env.bash"
     VERSION="v${raw}"
     return
@@ -599,6 +637,27 @@ RC_SENTINEL_END="# pass-env-init END"
 EXT_SENTINEL_BEGIN="# pass-env-extensions BEGIN"
 EXT_SENTINEL_END="# pass-env-extensions END"
 
+# Create an RC file if absent, preserving user ownership under sudo.
+#
+# When the installer runs as root on behalf of SUDO_USER (HOME already
+# re-resolved in main), a plain touch would create a root-owned file in the
+# user's home directory, breaking their ability to edit their own RC file.
+#
+# Arguments:
+#   $1 - Path to the RC file
+# Returns:
+#   0 always
+ensure_rc_file() {
+  local rc_file="$1"
+  [[ -f "${rc_file}" ]] && return 0
+  info "Creating ${rc_file}"
+  touch "${rc_file}"
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+    chown "${SUDO_USER}" "${rc_file}" || \
+      warn "Could not chown ${rc_file} to ${SUDO_USER}; check its ownership."
+  fi
+}
+
 # Append a guarded source block for pass-env-init.sh to a shell RC file.
 #
 # The block is wrapped in BEGIN/END sentinel comments so the uninstaller can
@@ -619,10 +678,7 @@ inject_rc() {
   local rc_file="$1"
   local init_script_path="$2"
 
-  if [[ ! -f "${rc_file}" ]]; then
-    info "Creating ${rc_file}"
-    touch "${rc_file}"
-  fi
+  ensure_rc_file "${rc_file}"
 
   if grep -qF "$RC_SENTINEL_BEGIN" "${rc_file}"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
@@ -657,10 +713,7 @@ EOF
 inject_extensions_rc() {
   local rc_file="$1"
 
-  if [[ ! -f "${rc_file}" ]]; then
-    info "Creating ${rc_file}"
-    touch "${rc_file}"
-  fi
+  ensure_rc_file "${rc_file}"
 
   if grep -qF "$EXT_SENTINEL_BEGIN" "${rc_file}"; then
     printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
@@ -746,8 +799,17 @@ main() {
   show_summary "$VERSION" "${os}"
 
   if [[ "$YES" != true && "$DRY_RUN" != true ]]; then
-    printf '\nProceed with installation? [y/N] '
-    read -r reply
+    # Read the confirmation from /dev/tty, not stdin: when this script is
+    # piped (curl ... | bash), stdin is the script itself and a plain read
+    # would consume script text instead of the user's answer.
+    local reply=""
+    if [[ -r /dev/tty && -w /dev/tty ]]; then
+      printf '\nProceed with installation? [y/N] ' > /dev/tty
+      read -r reply < /dev/tty
+    else
+      error "No terminal available for the confirmation prompt (e.g. piped via curl | bash).
+  Re-run with --yes to skip confirmation."
+    fi
     [[ "${reply}" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
   fi
 
@@ -771,8 +833,13 @@ main() {
     # Assert the tarball contained exactly one top-level directory.
     # head -1 would silently pick the first if there were multiple, masking a
     # malformed or unexpected tarball structure.
-    local -a extracted_dirs
-    mapfile -t extracted_dirs < <(find "${tmp_dir}" -maxdepth 1 -mindepth 1 -type d)
+    # NOTE: a while-read loop is used instead of mapfile, which requires
+    # bash 4+ and is unavailable on the macOS default /bin/bash (3.2).
+    local -a extracted_dirs=()
+    local extracted_dir
+    while IFS= read -r extracted_dir; do
+      extracted_dirs+=("${extracted_dir}")
+    done < <(find "${tmp_dir}" -maxdepth 1 -mindepth 1 -type d)
     [[ ${#extracted_dirs[@]} -eq 1 ]] \
       || error "Expected exactly 1 top-level directory in archive, found ${#extracted_dirs[@]}"
     src_dir="${extracted_dirs[0]}"
@@ -815,10 +882,9 @@ main() {
     fi
   fi
 
-  # Create INIT_SCRIPT_DIR when either component will be installed.
-  if [[ "$NO_INIT" == false || "$NO_UNINSTALL" == false ]]; then
-    maybe_mkdir "$INIT_SCRIPT_DIR"
-  fi
+  # INIT_SCRIPT_DIR always exists: it holds the install manifest, plus the
+  # init and uninstall scripts unless they are skipped.
+  maybe_mkdir "$INIT_SCRIPT_DIR"
 
   if [[ "$NO_INIT" == false ]]; then
     maybe_install 0644 \
@@ -849,6 +915,8 @@ main() {
       warn "  export PASSWORD_STORE_ENABLE_EXTENSIONS=true"
     fi
   fi
+
+  write_manifest
 
   info "pass-env ${VERSION} installed successfully!"
 

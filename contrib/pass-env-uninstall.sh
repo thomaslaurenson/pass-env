@@ -199,6 +199,33 @@ portable_sed_inplace() {
   fi
 }
 
+# Remove every file listed in an install manifest, then the manifest itself.
+#
+# install.sh writes INIT_SCRIPT_DIR/install-manifest.txt with one absolute
+# path per line for every file it installed. Removing from the manifest means
+# the uninstaller deletes exactly what was installed, even if install paths
+# change between versions. resolve_paths() removal below remains as a
+# fallback for installs performed before the manifest existed.
+#
+# Arguments:
+#   $1 - Path to the manifest file
+# Outputs:
+#   stdout: [removed]/[skipped] line per file
+# Returns:
+#   0 always (missing manifest is not an error)
+remove_from_manifest() {
+  local manifest="$1"
+  [[ -f "$manifest" ]] || return 0
+  info "Removing files listed in ${manifest}"
+  local path
+  while IFS= read -r path; do
+    # Only absolute paths; ignore blank or malformed lines defensively.
+    [[ -n "$path" && "$path" == /* ]] || continue
+    maybe_rm "$path"
+  done < "$manifest"
+  maybe_rm "$manifest"
+}
+
 # Sentinel strings used to locate the injected RC block
 readonly RC_SENTINEL_BEGIN="# pass-env-init BEGIN"
 readonly RC_SENTINEL_END="# pass-env-init END"
@@ -282,6 +309,14 @@ main() {
   local os="$_OS"
 
   info "Uninstalling pass-env"
+
+  # Manifest-driven removal first (exact list written by install.sh), then
+  # the mirrored-path fallback below (idempotent; already-removed files are
+  # reported as [skipped]).
+  for install_type in user system; do
+    resolve_paths "$os" "$install_type"
+    remove_from_manifest "${INIT_SCRIPT_DIR}/install-manifest.txt"
+  done
 
   for install_type in user system; do
     resolve_paths "$os" "$install_type"

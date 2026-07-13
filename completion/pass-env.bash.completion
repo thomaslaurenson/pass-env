@@ -100,8 +100,8 @@ __pass_env() {
       ;;
 
     run)
-      # pass env run [--entry PATH] -- COMMAND ...
-      # Before `--`, complete flags/entries; after `--`, delegate to the
+      # pass env run [ENTRY ...] -- COMMAND ...
+      # Before `--`, complete entries (and `--`); after `--`, delegate to the
       # command that follows so its own completions (files, flags, etc.) work.
       # Detect if `--` is already present before current cursor
       local seen_ddash=0
@@ -120,33 +120,18 @@ __pass_env() {
         return 0
       fi
 
-      local opts="--entry -- --help -h"
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-      COMPREPLY+=( $(compgen -W "$opts" -- "$cur") )
+      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
       # Also allow entries directly (convenience)
       __pass_env_complete_entries "$cur"
       ;;
 
     set)
-      # pass env set [ENTRY] | pass env set --entry ENTRY
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-      COMPREPLY+=( $(compgen -W "--entry --help -h" -- "$cur") )
+      # pass env set [ENTRY ...]
       __pass_env_complete_entries "$cur"
       ;;
 
     unset)
-      # pass env unset [ENTRY] | pass env unset --entry ENTRY
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-      COMPREPLY+=( $(compgen -W "--entry --help -h" -- "$cur") )
+      # pass env unset [ENTRY ...]
       __pass_env_complete_entries "$cur"
       ;;
 
@@ -195,10 +180,6 @@ __passenv() {
 
   case "$subcmd" in
     set)
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
       __pass_env_complete_entries "$cur"
       ;;
 
@@ -231,13 +212,10 @@ __passenv() {
         _command_offset $(( ddash_pos + 1 ))
         return 0
       fi
-      if [[ "$prev" == "--entry" ]]; then
-        __pass_env_complete_entries "$cur"
-        return 0
-      fi
-      COMPREPLY+=( $(compgen -W "-- --entry" -- "$cur") )
+      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
       __pass_env_complete_entries "$cur"
       ;;
+
 
     list|loaded|version|help)
       COMPREPLY=()

@@ -1,4 +1,4 @@
-.TH pass-env 1 "2026 June 30" "Version 0.2.5" "User Commands"
+.TH pass-env 1 "2026 July 02" "Version 0.3.0" "User Commands"
 
 .SH NAME
 pass-env \- a password-store extension to manage environment variables from encrypted .env entries
@@ -7,9 +7,14 @@ pass-env \- a password-store extension to manage environment variables from encr
 .B pass env
 .I SUBCOMMAND
 [
+.B \-\-no\-expand
+] [
 .I ENTRY ...
 ] [
 .B \-\-
+[
+.I VAR=VALUE ...
+]
 .I COMMAND ...
 ]
 
@@ -55,7 +60,7 @@ entries available in the password store, one per line (no
 suffix), sorted alphabetically.
 
 .TP
-.BI "pass env run " "ENTRY [ENTRY ...]" " \-\- " "COMMAND [ARGS...]"
+.BI "pass env run " "[\-\-no\-expand]" " " "ENTRY [ENTRY ...]" " \-\- " "[VAR=VALUE ...] COMMAND [ARGS...]"
 Decrypt one or more entries and execute
 .I COMMAND
 with the resulting variables set in its environment.  Nothing is written to
@@ -71,6 +76,65 @@ pass env run os/prod.env \-\- printenv MY_VAR
 pass env run api/openai.env db/prod.env \-\- myapp
 .EE
 .RE
+.IP
+When multiple entries define the same variable, later entries override
+earlier ones.
+.SS Using an entry's variables as command arguments
+A bare
+.I $VAR
+cannot be used to pass an entry's variable to
+.IR COMMAND :
+the calling shell expands it before
+.B pass
+runs, at which point the entry is not yet loaded, so it collapses to an empty
+string.  Write
+.BI {{ VAR }}
+instead.  It is inert to both bash and zsh (brace expansion requires a comma
+or a
+.B ..
+range), so it survives the call site without quoting and is substituted after
+the entries are loaded:
+.PP
+.RS
+.EX
+pass env run api/openai.env \-\- openai responses create \e
+    \-\-model {{SPARK_MODEL}} \-\-input "what is a cat?"
+.EE
+.RE
+.PP
+Only names supplied by the named entries, or by a
+.I VAR=VALUE
+assignment (below), are substituted; any other
+.BI {{ ... }}
+text, such as a template placeholder, is left exactly as written.  Pass
+.B \-\-no\-expand
+to disable substitution entirely.
+.PP
+Substitution uses parameter expansion only, never
+.BR eval ,
+and the result is not re-parsed or re-split: a value containing spaces or shell
+metacharacters arrives as one inert argument, never as executable code.
+.SS Setting variables for the command
+A leading
+.I VAR=VALUE
+assignment before
+.I COMMAND
+sets that variable for the command and overrides any value from the entries,
+exactly as it would on a normal shell command line:
+.PP
+.RS
+.EX
+pass env run api/openai.env \-\- LOG_LEVEL=debug myapp
+.EE
+.RE
+.PP
+These assignments come from the user rather than from the store, so the
+denylist that guards entry content (see
+.BR SECURITY )
+does not apply to them, just as a shell would not second-guess them.  They may
+also be referenced as
+.BI {{ VAR }}
+placeholders.
 
 .TP
 .BI "pass env set " "ENTRY [ENTRY ...]"
@@ -78,7 +142,12 @@ Decrypt one or more entries and print
 .B export
 .I KEY=VALUE
 statements to stdout.  Eval the output to load variables into the current
-shell.  If
+shell.  Each entry's exports are preceded by a
+.B "# pass-env entry: NAME"
+comment marker (eval-safe) that the
+.B passenv
+shell function uses to attribute variables to entries.  When multiple
+entries define the same variable, later entries override earlier ones.  If
 .I ENTRY
 is omitted and
 .BR fzf (1)
@@ -160,15 +229,16 @@ passenv set --force os/prod.env
 
 .TP
 .BI "passenv unset " "[ENTRY ...]"
-Unset the variables loaded from each named entry and remove it from the
-tracker.  If no
+Restore the variables loaded from each named entry to their pre-load state
+(the previous value is re-exported, or the variable is unset if it did not
+exist before loading) and remove the entry from the tracker.  If no
 .I ENTRY
 is given, launches an interactive
 .BR fzf (1)
 picker over currently loaded entries.
 
 .TP
-.BI "passenv run " "[ENTRY ...]" " \-\- " "COMMAND [ARGS...]"
+.BI "passenv run " "[\-\-no\-expand]" " " "[ENTRY ...]" " \-\- " "[VAR=VALUE ...] COMMAND [ARGS...]"
 Decrypt one or more entries and execute
 .I COMMAND
 with their variables set in its environment only.
@@ -190,8 +260,20 @@ picker is launched.
 .EX
 passenv run os/prod.env \-\- printenv MY_VAR
 passenv run api/openai.env db/prod.env \-\- myapp
+passenv run api/openai.env \-\- myapp \-\-model {{SPARK_MODEL}}
+passenv run api/openai.env \-\- LOG_LEVEL=debug myapp
 .EE
 .RE
+.IP
+Supports the same
+.BI {{ VAR }}
+placeholders,
+.I VAR=VALUE
+assignments and
+.B \-\-no\-expand
+flag as
+.BR "pass env run" ,
+which it forwards to.
 
 .TP
 .B passenv version
@@ -242,9 +324,13 @@ Key names must match
 .IP \(bu 4
 Well-known dangerous environment variables (e.g.,
 .BR PATH ,
+.BR HOME ,
 .BR LD_PRELOAD ,
 .BR PROMPT_COMMAND ,
-.BR BASH_ENV )
+.BR BASH_ENV ,
+.BR FPATH ,
+.BR PYTHONSTARTUP ,
+.BR GIT_SSH_COMMAND )
 are refused as defense-in-depth against a compromised store.
 .IP \(bu 4
 Entry filenames must end in

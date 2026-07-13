@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 - 2026-07-02
+
+### Added
+
+- Expand {{VAR}} placeholders in run command arguments
+- Add --no-expand to disable placeholder substitution
+- Support a leading VAR=VALUE assignment before the command
+- Emit a per-entry marker in set output so passenv tracks selected entries by name
+- Restore variables to their pre-load values on passenv unset
+- Write an install manifest and remove exactly the listed files on uninstall
+- Expand the dangerous-variable denylist
+
+### Fixed
+
+- Remove the nonexistent --entry flag from bash and zsh completions
+- Read the install confirmation prompt so curl-piped installs work without --yes
+- Replace mapfile in the installer with a portable loop for bash 3.2
+- Chown installer-created RC files to the invoking user under sudo
+- Print "No entry selected" when the fzf picker is cancelled with ESC
+- Reject only .. path components in the traversal check so names like a..b.env keep working
+
 ## 0.2.5 - 2026-06-30
 
 ### Added
