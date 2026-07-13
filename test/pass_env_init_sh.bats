@@ -2,7 +2,8 @@
 
 # Tests for contrib/pass-env-init.sh
 #
-# The mock 'pass' binary placed on PATH handles 'pass env set ENTRY' calls.
+# The mock 'pass' binary placed on PATH mocks 'pass show' and delegates every
+# 'pass env ...' call to the real src/env.bash.
 # Each @test block runs in its own process; setup() sources pass-env-init.sh
 # fresh with an empty _PASSENV_TRACKER.
 
@@ -20,6 +21,8 @@ setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export PASSWORD_STORE_DIR="$REPO_ROOT/test/fixtures/store"
   export PASSENV_FIXTURE_CONTENT_DIR="$REPO_ROOT/test/fixtures/content"
+  # mock_pass delegates 'pass env ...' to the real extension; tell it where.
+  export PASS_ENV_SRC="$REPO_ROOT/src/env.bash"
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   ln -sf "$REPO_ROOT/test/helpers/mock_pass" "$BATS_TEST_TMPDIR/bin/pass"
@@ -160,4 +163,66 @@ setup() {
   passenv set "myentry.env"
   source "$REPO_ROOT/contrib/pass-env-init.sh"
   [[ -n "${_PASSENV_TRACKER[myentry.env]:-}" ]]
+}
+
+# Restore semantics: unset returns variables to their pre-load state
+
+@test "unset: restores the previous value of a variable that existed before set" {
+  export MY_VAR="original_value"
+  passenv set "myentry.env"
+  [[ "$MY_VAR" == "myvalue" ]]
+  passenv unset "myentry.env"
+  [[ "$MY_VAR" == "original_value" ]]
+}
+
+@test "unset: removes a variable that did not exist before set" {
+  unset MY_VAR 2>/dev/null || true
+  passenv set "myentry.env"
+  [[ "$MY_VAR" == "myvalue" ]]
+  passenv unset "myentry.env"
+  [[ -z "${MY_VAR+x}" ]]
+}
+
+@test "unset: restores special-character values verbatim" {
+  export MY_VAR='prev !d+f$bn value'
+  passenv set "myentry.env"
+  passenv unset "myentry.env"
+  [[ "$MY_VAR" == 'prev !d+f$bn value' ]]
+}
+
+@test "set: rollback restores previous values, not just unset" {
+  export MY_VAR="original_value"
+  passenv set "myentry.env" "nonexistent.env" 2>/dev/null || true
+  [[ "$MY_VAR" == "original_value" ]]
+  [[ -z "${_PASSENV_TRACKER[myentry.env]:-}" ]]
+}
+
+# Entry marker: tracker keys use real entry names
+
+@test "set: tracker key comes from the entry marker in pass env set output" {
+  passenv set "myentry.env"
+  run passenv loaded
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "myentry.env" ]]
+  ! [[ "$output" =~ "__passenv_" ]]
+}
+
+# passenv run: assignment prefix in the command
+
+@test "run: honors a leading VAR=value assignment before the command" {
+  run passenv run "myentry.env" -- FROMCMD=fromcmd printenv FROMCMD
+  [ "$status" -eq 0 ]
+  [[ "$output" == "fromcmd" ]]
+}
+
+@test "run: substitutes a {{VAR}} placeholder from the entry" {
+  run passenv run "myentry.env" -- printf '%s' '{{MY_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue" ]]
+}
+
+@test "run: --no-expand leaves placeholders literal" {
+  run passenv run --no-expand "myentry.env" -- printf '%s' '{{MY_VAR}}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == '{{MY_VAR}}' ]]
 }
