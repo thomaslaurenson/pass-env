@@ -92,15 +92,14 @@ _pass_env() {
           fi
 
           _arguments \
-            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '--no-expand[do not substitute {{VAR}} placeholders in COMMAND args]' \
             '--[end of pass-env flags; COMMAND follows]' \
-            '1:entry:_pass_env_entries'
+            '*:entry:_pass_env_entries'
           ;;
 
         set|unset)
           _arguments \
-            '--entry=[pass entry path]:entry:_pass_env_entries' \
-            '1:entry:_pass_env_entries'
+            '*:entry:_pass_env_entries'
           ;;
 
         help)
@@ -156,8 +155,8 @@ _passenv() {
       case $words[1] in
         set)
           _arguments \
-            '--entry=[pass entry path]:entry:_pass_env_entries' \
-            '1:entry:_pass_env_entries'
+            '--force[reload an already-loaded entry]' \
+            '*:entry:_pass_env_entries'
           ;;
 
         unset)
@@ -190,9 +189,9 @@ _passenv() {
           fi
 
           _arguments \
-            '--entry=[pass entry path]:entry:_pass_env_entries' \
+            '--no-expand[do not substitute {{VAR}} placeholders in COMMAND args]' \
             '--[end of passenv flags; COMMAND follows]' \
-            '1:entry:_pass_env_entries'
+            '*:entry:_pass_env_entries'
           ;;
 
         list|loaded|version|help)
