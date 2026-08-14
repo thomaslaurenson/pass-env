@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-08-14
+
+### Fixed
+
+- Reject shell metacharacters in entry names to prevent command injection
+
 ## 0.3.0 - 2026-07-02
 
 ### Added
