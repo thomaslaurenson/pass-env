@@ -116,6 +116,34 @@ teardown() {
   [[ "$output" =~ "no traversal allowed" ]]
 }
 
+# entry name character validation (command-injection prevention)
+
+@test "set: rejects entry name containing command substitution" {
+  run bash "$ENV_BASH" set 'evil$(id).env'
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "invalid characters in entry name" ]]
+}
+
+@test "run: rejects entry name containing a semicolon" {
+  run bash "$ENV_BASH" run 'foo;bar.env' -- true
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "invalid characters in entry name" ]]
+}
+
+@test "set: rejects interactive fzf selection containing command substitution" {
+  local tmpbin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$tmpbin"
+  ln -s "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+  # The \$ is escaped so this test shell does not expand it; env.bash must
+  # reject the name before anything evaluates it, so 'pwned' is never created.
+  run env "PATH=$tmpbin:$PATH" \
+    "MOCK_FZF_OUTPUT=evil\$(touch $BATS_TEST_TMPDIR/pwned).env" \
+    bash "$ENV_BASH" set
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "invalid characters in entry name" ]]
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
+}
+
 # set: output format and eval round-trip
 
 @test "set: emits export lines for a valid entry" {

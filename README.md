@@ -73,7 +73,7 @@ There are a selection of other install options, including:
 ```sh
 $ pass show env/test.env 
 USERNAME=admin
-PASSWORD=!d+f$bn
+PASSWORD=!d+f$bn1df213
 ```
 
 > **Note:** Values cannot span multiple lines. Newlines within values are not supported. Each line must be a complete `KEY=VALUE` pair.
@@ -96,9 +96,7 @@ Export OpenStack and Tenable creds and run custom Python script in subshell:
 pass env run openstack.env tenable.env -- python3 check_vulns.py
 ```
 
-To use an entry's variables as *arguments* to the command, write `{{VAR}}` (a
-bare `$VAR` cannot work — see
-[Passing Variables to Commands](#passing-variables-to-commands)):
+To use an entry's variables as *arguments* to the command, write `{{VAR}}`:
 
 ```sh
 pass env run api/openai.env -- openai responses create --model {{SPARK_MODEL}}
@@ -152,8 +150,7 @@ passenv: unset db/prod.env → DB_HOST DB_PORT DB_NAME DB_PASS
 
 ### Using entry variables as command arguments
 
-A variable that lives *inside* an entry cannot be referenced as `$VAR` on a
-`run` command line:
+A variable that lives *inside* an entry cannot be referenced as `$VAR` on a `run` command line:
 
 ```sh
 # WRONG: your shell expands $SPARK_MODEL to "" before pass ever runs
@@ -161,45 +158,31 @@ pass env run api/openai.env -- openai responses create --model $SPARK_MODEL --in
 # -> openai sees: --model --input "what is a cat?"
 ```
 
-This is shell expansion order, not a pass-env quirk: the substitution happens
-at the call site, before the entry has been loaded.
-
-Write `{{VAR}}` instead. It is inert to both bash and zsh (brace expansion
-needs a comma or a `..` range), so it survives your shell unquoted and is
-substituted once the entry is loaded:
+This is shell expansion order, not a pass-env quirk: the substitution happens at the call site, before the entry has been loaded. Write `{{VAR}}` instead. It is inert to both bash and zsh (brace expansion needs a comma or a `..` range), so it survives your shell unquoted and is substituted once the entry is loaded:
 
 ```sh
 pass env run api/openai.env -- openai responses create --model {{SPARK_MODEL}} --input "what is a cat?"
 ```
 
-Only names supplied by the named entries (or by a `VAR=VALUE` assignment, see
-below) are substituted. Any other `{{...}}` text — a Handlebars or Jinja
-template, say — is left exactly as written. If you need to be certain nothing
-is touched, pass `--no-expand`:
+Only names supplied by the named entries (or by a `VAR=VALUE` assignment, see below) are substituted. Any other `{{...}}` text, a Handlebars or Jinja template, is left exactly as written. If you need to be certain nothing is touched, pass `--no-expand`:
 
 ```sh
 pass env run --no-expand api/openai.env -- render-template '{{SPARK_MODEL}}'
 ```
 
-Substitution uses parameter expansion only, never `eval`, and the result is
-never re-parsed or re-split. A value containing spaces or shell metacharacters
-arrives as a single inert argument, not as executable code.
+Substitution uses parameter expansion only, never `eval`, and the result is never re-parsed or re-split. A value containing spaces or shell metacharacters arrives as a single inert argument, not as executable code.
 
 ### Setting variables for the command
 
-A leading `VAR=VALUE` before the command sets that variable for the command,
-overriding the entry, exactly as in a normal shell:
+A leading `VAR=VALUE` before the command sets that variable for the command, overriding the entry, exactly as in a normal shell:
 
 ```sh
 pass env run api/openai.env -- LOG_LEVEL=debug myapp
 ```
 
-These come from you rather than from the store, so the denylist that guards
-entry content does not apply to them — a shell would not second-guess them
-either. They can also be referenced as `{{VAR}}` placeholders.
+These come from you rather than from the store, so the denylist that guards entry content does not apply to them, a shell would not second-guess them either. They can also be referenced as `{{VAR}}` placeholders.
 
-Alternatively, load the entry into your shell for as long as you need it, and
-use the variables normally:
+Alternatively, load the entry into your shell for as long as you need it, and use the variables normally:
 
 ```sh
 passenv set api/openai.env

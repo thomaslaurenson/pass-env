@@ -186,12 +186,15 @@ __passenv() {
     unset)
       # Prefer loaded entries from the tracker; fall back to the full store.
       if [[ ${#_PASSENV_TRACKER[@]} -gt 0 ]]; then
-        local loaded_keys=()
+        # Literal prefix match, never `compgen -W`: compgen expands each word,
+        # so a loaded entry name containing $(...) or backticks (an attacker who
+        # can write the store controls filenames) would execute on a single TAB.
+        # See __pass_env_complete_entries for the same reasoning.
+        compopt +o filenames 2>/dev/null
         local k
         for k in "${!_PASSENV_TRACKER[@]}"; do
-          loaded_keys+=("$k")
+          [[ "$k" == "$cur"* ]] && COMPREPLY+=( "$k" )
         done
-        COMPREPLY=( $(compgen -W "${loaded_keys[*]}" -- "$cur") )
       else
         __pass_env_complete_entries "$cur"
       fi

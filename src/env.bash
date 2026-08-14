@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-readonly PASSENV_VERSION="0.3.0"
+readonly PASSENV_VERSION="0.3.1"
 
 # Marker line emitted before each entry's exports by the `set` subcommand.
 # contrib/pass-env-init.sh parses these to attribute variables to entries
@@ -156,15 +156,50 @@ _pass_env_fzf_select_entry() {
   fzf "${fzf_args[@]}" <<< "${entry_list}"
 }
 
+# Validate a resolved entry name before it is handed back to a caller.
+#
+# Enforces three properties, in order: the name ends in .env, contains no
+# path-traversal component, and is built only from characters that occur in
+# legitimate store paths. The character-set check is the security-critical
+# one: entry names flow into contexts that evaluate them (associative-array
+# subscripts in the passenv shell loader, `compgen -W` in bash completion, the
+# fzf preview command), so a name from a hostile store such as 'evil$(id).env'
+# must never reach them. Applied to both explicit candidates and names chosen
+# interactively via fzf, since fzf lists raw store filenames an attacker with
+# write access to the store controls.
+#
+# Arguments:
+#   $1 - Entry name to validate
+# Outputs:
+#   stderr: error message describing the first failing check
+# Returns:
+#   0 if the name is valid
+#   exits 1 otherwise
+_pass_env_validate_name() {
+  local name="$1"
+  [[ "${name}" == *.env ]] || _pass_env_die "entry name must end in .env: ${name}"
+  # Reject absolute paths and any '..' path *component* to prevent directory
+  # traversal outside PASSWORD_STORE_DIR. Matching whole components (rather
+  # than any '..' substring) keeps legitimate names like 'a..b.env' working.
+  if [[ "${name}" == /* || "/${name}/" == *"/../"* ]]; then
+    _pass_env_die "invalid entry path (no traversal allowed): ${name}"
+  fi
+  # Restrict to the characters that appear in real store paths. This blocks
+  # shell metacharacters ($ ` ; | & ( ) < > etc.) that would otherwise be
+  # evaluated when the name is later used as an array subscript or a
+  # completion word.
+  [[ "${name}" =~ ^[A-Za-z0-9._/@+-]+$ ]] \
+    || _pass_env_die "invalid characters in entry name: ${name}"
+}
+
 # Resolve a pass entry path, falling back to fzf when no candidate is given.
 #
 # If the candidate is non-empty and names a valid .env entry on disk, prints
 # it and returns immediately. If the candidate is non-empty but not found,
 # exits with an error. Only when the candidate is empty (no argument provided)
 # does it launch _pass_env_fzf_select_entry for interactive selection.
-# Enforces the requirement that all entry names end in .env and rejects
-# absolute paths and any '..' path component to prevent directory traversal
-# outside the store.
+# Every resolved name, explicit or interactively selected, is passed through
+# _pass_env_validate_name (.env suffix, no traversal, safe character set).
 #
 # Arguments:
 #   $1 - Candidate entry path (optional; triggers fzf if empty or not found)
@@ -172,7 +207,7 @@ _pass_env_fzf_select_entry() {
 #   PASSWORD_STORE_DIR - root of the password store (default: ~/.password-store)
 # Outputs:
 #   stdout: resolved entry path(s), one per line
-#   stderr: error if the candidate does not end in .env or is not found
+#   stderr: error if the candidate is invalid or is not found
 # Returns:
 #   0 on success
 #   exits 1 if the candidate is invalid or no entry can be resolved
@@ -180,14 +215,7 @@ _pass_env_resolve_entry() {
   local candidate="$1"
   local password_store_dir="${PASSWORD_STORE_DIR:-${HOME}/.password-store}"
   if [[ -n "${candidate}" ]]; then
-    [[ "${candidate}" == *.env ]] || _pass_env_die "entry name must end in .env: ${candidate}"
-    # Reject absolute paths and any '..' path *component* to prevent
-    # directory traversal outside PASSWORD_STORE_DIR. Matching whole
-    # components (rather than any '..' substring) keeps legitimate names
-    # like 'a..b.env' working.
-    if [[ "${candidate}" == /* || "/${candidate}/" == *"/../"* ]]; then
-      _pass_env_die "invalid entry path (no traversal allowed): ${candidate}"
-    fi
+    _pass_env_validate_name "${candidate}"
     local gpg_file="${password_store_dir}/${candidate}.gpg"
     if [[ -f "${gpg_file}" ]]; then
       if ! _pass_env_is_entry_in_store "${gpg_file}" "${password_store_dir}"; then
@@ -210,6 +238,13 @@ _pass_env_resolve_entry() {
   # gets a message instead of a silent set -e exit.
   selected="$(_pass_env_fzf_select_entry "")" || _pass_env_die "No entry selected."
   [[ -n "${selected}" ]] || _pass_env_die "No entry selected."
+  # fzf returns raw store filenames; validate each (fzf --multi can return
+  # several lines) before emitting so a hostile name never reaches a caller.
+  local sel
+  while IFS= read -r sel; do
+    [[ -n "${sel}" ]] || continue
+    _pass_env_validate_name "${sel}"
+  done <<< "${selected}"
   printf '%s\n' "${selected}"
 }
 
