@@ -473,6 +473,9 @@ _passenv_unset() {
       done < <(_passenv_split_words "${varlist}")
     fi
 
+    # Safe: `unset "arr[$key]"` evaluates its subscript, but entry names are
+    # validated against a restricted character set in the extension before they
+    # can enter the tracker, so this subscript holds no shell metacharacters.
     unset "_PASSENV_TRACKER[${entry}]"
     unset "_PASSENV_RESTORE[${entry}]"
 
