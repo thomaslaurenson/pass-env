@@ -67,21 +67,33 @@ _pass_env_is_entry_in_store() {
 #   1 if the name is safe
 _pass_env_is_dangerous_var() {
   case "$1" in
-    # Shell resolution, startup, and prompt hooks
+    # Shell resolution, startup, and prompt hooks. Every prompt string is
+    # listed, not just PS1: bash expands PS0 with command substitution before
+    # running each command, and zsh's PROMPT/RPROMPT family does the same under
+    # PROMPT_SUBST, which most zsh frameworks enable.
     PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|SHELL|HOME|\
-    PROMPT_COMMAND|PS1|PS2|PS3|PS4|\
+    PROMPT_COMMAND|PS0|PS1|PS2|PS3|PS4|\
+    PROMPT|PROMPT2|PROMPT3|PROMPT4|RPROMPT|RPS1|RPS2|SPROMPT|\
     FPATH|ZDOTDIR|CDPATH|\
     GLOBIGNORE|RANDOM|LINENO|PIPESTATUS|DIRSTACK)
       return 0 ;;
     # Dynamic linker / libc
     LD_*|DYLD_*|GCONV_PATH|LOCPATH|TMPDIR|TERMINFO|TERMINFO_DIRS)
       return 0 ;;
-    # Programs commonly executed implicitly by other tools
-    PAGER|MANPAGER|EDITOR|VISUAL|BROWSER)
+    # Programs commonly executed implicitly by other tools. LESSOPEN and
+    # LESSCLOSE carry a whole command line rather than a program name: less
+    # runs a value beginning with '|' through a shell for every file it opens,
+    # which covers man, git log and anything else that pages.
+    PAGER|MANPAGER|EDITOR|VISUAL|BROWSER|\
+    LESSOPEN|LESSCLOSE)
       return 0 ;;
-    # git: variables that name a command git will execute
+    # git: variables that name a command git will execute, plus the
+    # GIT_CONFIG_* family, which names one indirectly by injecting arbitrary
+    # config (core.pager, core.sshCommand, core.fsmonitor, alias.*) into every
+    # git invocation, including ones with no tty and no pager.
     GIT_SSH|GIT_SSH_COMMAND|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|\
-    GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND)
+    GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|\
+    GIT_CONFIG*)
       return 0 ;;
     # Language runtimes: code/path injection on next interpreter start
     PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|\

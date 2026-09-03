@@ -485,6 +485,46 @@ teardown() {
   [[ "$output" =~ "sensitive variable" ]]
 }
 
+@test "set: refuses to set PS0 from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_ps0.env"
+  printf 'PS0=$(evil)\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_ps0.env.gpg"
+  run bash "$ENV_BASH" set danger_ps0.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_ps0.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "set: refuses to set the zsh RPROMPT from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_rprompt.env"
+  printf 'RPROMPT=$(evil)\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_rprompt.env.gpg"
+  run bash "$ENV_BASH" set danger_rprompt.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_rprompt.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set LESSOPEN from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_lessopen.env"
+  printf 'LESSOPEN=|evil %%s\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_lessopen.env.gpg"
+  run bash "$ENV_BASH" run danger_lessopen.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_lessopen.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set GIT_CONFIG_KEY_0 from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_gitconfig.env"
+  printf 'GIT_CONFIG_KEY_0=core.fsmonitor\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_gitconfig.env.gpg"
+  run bash "$ENV_BASH" run danger_gitconfig.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_gitconfig.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
 # Command after -- : leading VAR=value assignment prefix
 
 @test "run: honors a leading VAR=value assignment before the command" {
