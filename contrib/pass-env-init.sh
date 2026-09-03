@@ -22,6 +22,23 @@ if [[ -z "${ZSH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
   return 1
 fi
 
+# Which shell this file was sourced into, decided once here and consulted by
+# every function that needs the bash or zsh form of an expansion.
+#
+# Deciding once, rather than re-reading BASH_VERSION at each site, keeps the
+# choice out of reach of anything loaded afterwards. A variable named
+# BASH_VERSION or ZSH_VERSION arriving from an entry would otherwise select the
+# wrong dialect; the expansion then fails, the failure reads as "the variable is
+# not set", and passenv unset records an unset where it should have recorded the
+# user's real pre-load value. The extension refuses both names, but the loader
+# and the extension install as separate files and can version-skew, and
+# _PASSENV_ is the one namespace the load loop will not eval.
+if [[ -n "${BASH_VERSION:-}" ]]; then
+  _PASSENV_SHELL=bash
+else
+  _PASSENV_SHELL=zsh
+fi
+
 # Initialise the tracking associative arrays exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
 #   _PASSENV_TRACKER  entry -> space-separated variable names loaded from it
@@ -40,18 +57,17 @@ fi
 # Abstracts the bash/zsh difference in associative-array key iteration:
 # bash uses ${!arr[@]}; zsh uses ${(@k)arr}. Uses eval to parse the zsh
 # syntax without the bash parser ever seeing it.
-# Branches on BASH_VERSION (set by bash itself, not spoofable by end users)
-# rather than ZSH_VERSION (a plain env var that could be set in bash).
+# Branches on _PASSENV_SHELL, decided once when this file was sourced.
 #
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
-#   BASH_VERSION     - set by bash; selects the bash iteration syntax
+#   _PASSENV_SHELL   - "bash" or "zsh"; selects the iteration syntax
 # Outputs:
 #   stdout: entry key names, one per line
 # Returns:
 #   0 always
 _passenv_keys() {
-  if [[ -n "${BASH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == bash ]]; then
     printf '%s\n' "${!_PASSENV_TRACKER[@]}"
   else
     # zsh: use parameter expansion flag (@k) for associative array keys
@@ -75,7 +91,7 @@ _passenv_keys() {
 # Returns:
 #   0 always
 _passenv_split_words() {
-  if [[ -n "${ZSH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == zsh ]]; then
     # In zsh, unquoted $1 does not word-split by default; ${=1} enables it.
     # Safety contract: callers must only pass variable names validated against
     # ^[A-Za-z_][A-Za-z0-9_]*$; that character class excludes all IFS chars,
@@ -100,7 +116,7 @@ _passenv_split_words() {
 # Returns:
 #   0 if the variable is set (possibly empty), 1 otherwise
 _passenv_var_is_set() {
-  if [[ -n "${BASH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == bash ]]; then
     [[ -n "${!1+x}" ]]
   else
     # shellcheck disable=SC2296
@@ -124,7 +140,7 @@ _passenv_var_is_set() {
 _passenv_snapshot_stmt() {
   local name="$1" val
   if _passenv_var_is_set "${name}"; then
-    if [[ -n "${BASH_VERSION:-}" ]]; then
+    if [[ "${_PASSENV_SHELL}" == bash ]]; then
       val="${!name}"
     else
       # shellcheck disable=SC2296

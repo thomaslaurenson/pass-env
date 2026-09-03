@@ -577,6 +577,26 @@ teardown() {
   [[ "$output" =~ "sensitive variable" ]]
 }
 
+@test "set: refuses to set BASH_VERSION from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_bashver.env"
+  printf 'BASH_VERSION=5.2\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_bashver.env.gpg"
+  run bash "$ENV_BASH" set danger_bashver.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_bashver.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set ZSH_VERSION from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_zshver.env"
+  printf 'ZSH_VERSION=5.9\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_zshver.env.gpg"
+  run bash "$ENV_BASH" run danger_zshver.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_zshver.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
 @test "run: refuses to set GNUPGHOME from an entry" {
   local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_gnupg.env"
   printf 'GNUPGHOME=/tmp/evil-gnupg\n' > "$content_fixture"

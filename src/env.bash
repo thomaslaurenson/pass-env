@@ -71,7 +71,14 @@ _pass_env_is_dangerous_var() {
     # listed, not just PS1: bash expands PS0 with command substitution before
     # running each command, and zsh's PROMPT/RPROMPT family does the same under
     # PROMPT_SUBST, which most zsh frameworks enable.
+    #
+    # BASH_* and ZSH_* are matched as families rather than named individually.
+    # The shell sets them to describe itself, so code reads them to decide which
+    # dialect it is running under (contrib/pass-env-init.sh does), and an entry
+    # that forges one steers that decision. Nothing legitimate in a .env starts
+    # with either prefix.
     PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|SHELL|HOME|\
+    BASH_*|ZSH_*|\
     PROMPT_COMMAND|PS0|PS1|PS2|PS3|PS4|\
     PROMPT|PROMPT2|PROMPT3|PROMPT4|RPROMPT|RPS1|RPS2|SPROMPT|\
     FPATH|ZDOTDIR|CDPATH|\

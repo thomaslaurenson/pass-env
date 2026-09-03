@@ -92,4 +92,15 @@ if [[ -n "${_PASSENV_TRACKER[hijacked.env]:-}" ]]; then
 fi
 passenv unset "rebind_current.env" >/dev/null
 
+# Test 7: a stray BASH_VERSION does not flip the loader's dialect detection.
+export PRESET_VAR=presetvalue
+BASH_VERSION='5.2'
+stmt="$(_passenv_snapshot_stmt PRESET_VAR)"
+unset BASH_VERSION
+if [[ "$stmt" != 'export PRESET_VAR=presetvalue' ]]; then
+  printf 'FAIL: snapshot wrong with BASH_VERSION set under zsh (got: %s)\n' "$stmt" >&2
+  exit 1
+fi
+unset PRESET_VAR
+
 printf 'ok\n'

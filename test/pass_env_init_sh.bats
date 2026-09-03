@@ -283,3 +283,22 @@ export SKEW_VAR=skewvalue"
   [[ "$output" =~ "refusing unsafe entry name" ]]
   [[ ! -e "$BATS_TEST_TMPDIR/PWNED" ]]
 }
+
+# Shell detection
+
+@test "snapshot: restores the real value when BASH_VERSION is cleared" {
+  export PRESET_VAR=presetvalue
+  local saved="$BASH_VERSION"
+  BASH_VERSION=""
+  run _passenv_snapshot_stmt PRESET_VAR
+  BASH_VERSION="$saved"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "export PRESET_VAR=presetvalue" ]]
+}
+
+@test "snapshot: still records an unset for a variable that is genuinely absent" {
+  unset ABSENT_VAR 2>/dev/null || true
+  run _passenv_snapshot_stmt ABSENT_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "unset ABSENT_VAR" ]]
+}
