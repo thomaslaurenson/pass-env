@@ -555,6 +555,50 @@ teardown() {
   [[ "$output" =~ "sensitive variable" ]]
 }
 
+# Reserved variable namespace
+
+@test "run: an entry key of 'callback' does not rebind the parser dispatch" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_callback.env"
+  local marker="$BATS_TEST_TMPDIR/rebind_marker"
+  printf 'callback=eval\ntrue=;touch %s\nSAFE=safe\n' "$marker" > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_callback.env.gpg"
+  run bash "$ENV_BASH" run rebind_callback.env -- printenv SAFE
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_callback.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "safe" ]]
+  [ ! -e "$marker" ]
+}
+
+@test "run: an entry key of 'expand' does not disable placeholder substitution" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_expand.env"
+  printf 'expand=false\nMODEL=gpt\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_expand.env.gpg"
+  run bash "$ENV_BASH" run rebind_expand.env -- printf '%s\n' '{{MODEL}}'
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_expand.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "gpt" ]]
+}
+
+@test "run: rejects a reserved _pass_env_ variable name from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/reserved_run.env"
+  printf '_pass_env_callback=eval\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/reserved_run.env.gpg"
+  run bash "$ENV_BASH" run reserved_run.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/reserved_run.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "reserved variable name" ]]
+}
+
+@test "set: rejects a reserved _PASS_ENV_ variable name from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/reserved_set.env"
+  printf '_PASS_ENV_LOADED_NAMES=HOME\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/reserved_set.env.gpg"
+  run bash "$ENV_BASH" set reserved_set.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/reserved_set.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "reserved variable name" ]]
+}
+
 # Command after -- : leading VAR=value assignment prefix
 
 @test "run: honors a leading VAR=value assignment before the command" {

@@ -353,31 +353,48 @@ _pass_env_list() {
 # callback for every KEY=VALUE pair. All parsing, validation, and denylist
 # checks happen here in one place, callers only provide the emit action.
 #
+# The emit callbacks assign the variables they are given, and an assignment
+# lands in the nearest enclosing scope that already declares that name. This
+# function's own locals are therefore reachable from entry content, so they all
+# carry the _pass_env_ prefix and keys in that namespace are refused below.
+#
 # Arguments:
 #   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
 #   $2 - Callback function name; called as "$callback" "$key" "$val"
 # Returns:
-#   0 on success, exits 1 on decryption failure, invalid key name, dangerous
-#   variable, or unsupported line format
+#   0 on success, exits 1 on decryption failure, invalid key name, reserved key
+#   name, dangerous variable, or unsupported line format
 _pass_env_for_each_var() {
-  local entry="$1" callback="$2"
-  local content key val line
-  content="$(pass show -- "${entry}")" || _pass_env_die "unable to show entry: ${entry}"
-  while IFS= read -r line; do
-    line="${line%$'\r'}"   # Strip trailing CR (handles CRLF files transparently)
-    [[ -z "${line}" ]] && continue
-    case "${line}" in \#*) continue ;; esac
-    if [[ "${line}" =~ ^([^=]+)=(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-      [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || _pass_env_die "invalid variable name in ${entry}: ${key}"
-      if _pass_env_is_dangerous_var "${key}"; then
-        _pass_env_die "refusing to set sensitive variable from entry: ${key}"
+  local _pass_env_entry="$1" _pass_env_callback="$2"
+  local _pass_env_content _pass_env_key _pass_env_val _pass_env_line
+  _pass_env_content="$(pass show -- "${_pass_env_entry}")" \
+    || _pass_env_die "unable to show entry: ${_pass_env_entry}"
+  while IFS= read -r _pass_env_line; do
+    # Strip trailing CR (handles CRLF files transparently)
+    _pass_env_line="${_pass_env_line%$'\r'}"
+    [[ -z "${_pass_env_line}" ]] && continue
+    case "${_pass_env_line}" in \#*) continue ;; esac
+    if [[ "${_pass_env_line}" =~ ^([^=]+)=(.*)$ ]]; then
+      _pass_env_key="${BASH_REMATCH[1]}"; _pass_env_val="${BASH_REMATCH[2]}"
+      [[ "${_pass_env_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+        || _pass_env_die "invalid variable name in ${_pass_env_entry}: ${_pass_env_key}"
+      # Reserved namespace. Without this a key of 'callback' would rebind the
+      # dispatch target on the line below and the next line of the entry would
+      # be executed as a command; '_PASS_ENV_LOADED_NAMES' would forge the
+      # placeholder allowlist. Renaming the locals is what makes one prefix
+      # test sufficient here.
+      case "${_pass_env_key}" in
+        _pass_env_*|_PASS_ENV_*)
+          _pass_env_die "reserved variable name in ${_pass_env_entry}: ${_pass_env_key}" ;;
+      esac
+      if _pass_env_is_dangerous_var "${_pass_env_key}"; then
+        _pass_env_die "refusing to set sensitive variable from entry: ${_pass_env_key}"
       fi
-      "${callback}" "${key}" "${val}"
+      "${_pass_env_callback}" "${_pass_env_key}" "${_pass_env_val}"
     else
-      _pass_env_die "unsupported line format in ${entry} (expected KEY=VALUE)"
+      _pass_env_die "unsupported line format in ${_pass_env_entry} (expected KEY=VALUE)"
     fi
-  done <<< "${content}"
+  done <<< "${_pass_env_content}"
 }
 
 # Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
@@ -514,42 +531,45 @@ _pass_env_expand_placeholders() {
 #   exit status of COMMAND
 #   exits 1 if ENTRY or COMMAND arguments are missing
 _pass_env_run_with_env() {
-  local expand="$1"; shift
-  local entries=()
+  local _pass_env_expand="$1"; shift
+  local _pass_env_entries=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
-    entries+=("$1"); shift
+    _pass_env_entries+=("$1"); shift
   done
   [[ "${1:-}" == "--" ]] && shift
-  [[ "${#entries[@]}" -ge 1 ]] || _pass_env_die "run: missing ENTRY"
+  [[ "${#_pass_env_entries[@]}" -ge 1 ]] || _pass_env_die "run: missing ENTRY"
   [[ "$#" -ge 1 ]] || _pass_env_die "run: missing COMMAND"
   (
-    # Stage 1: entries.
+    # Stage 1: entries. Locals in this function carry the _pass_env_ prefix
+    # because stage 1 exports entry-controlled names into this scope; see
+    # _pass_env_for_each_var for the reserved-namespace check that pairs
+    # with the naming.
     _PASS_ENV_LOADED_NAMES=""
-    local e
-    for e in "${entries[@]}"; do
-      _pass_env_export_entry "${e}"
+    local _pass_env_e
+    for _pass_env_e in "${_pass_env_entries[@]}"; do
+      _pass_env_export_entry "${_pass_env_e}"
     done
 
     # Stage 2: leading VAR=value assignments, which override the entries.
-    local key val
+    local _pass_env_key _pass_env_val
     while [[ $# -gt 0 && "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
-      key="${1%%=*}"
-      val="${1#*=}"
-      export "${key}=${val}"
-      _PASS_ENV_LOADED_NAMES="${_PASS_ENV_LOADED_NAMES:+${_PASS_ENV_LOADED_NAMES} }${key}"
+      _pass_env_key="${1%%=*}"
+      _pass_env_val="${1#*=}"
+      export "${_pass_env_key}=${_pass_env_val}"
+      _PASS_ENV_LOADED_NAMES="${_PASS_ENV_LOADED_NAMES:+${_PASS_ENV_LOADED_NAMES} }${_pass_env_key}"
       shift
     done
     # Every remaining token was an assignment: there is no command to run.
     [[ "$#" -ge 1 ]] || _pass_env_die "run: missing COMMAND"
 
     # Stage 3: {{NAME}} placeholder substitution.
-    if [[ "${expand}" == true ]]; then
-      local args=() a
-      for a in "$@"; do
-        _pass_env_expand_placeholders "${_PASS_ENV_LOADED_NAMES}" "${a}"
-        args+=("${_PASS_ENV_EXPANDED}")
+    if [[ "${_pass_env_expand}" == true ]]; then
+      local _pass_env_args=() _pass_env_a
+      for _pass_env_a in "$@"; do
+        _pass_env_expand_placeholders "${_PASS_ENV_LOADED_NAMES}" "${_pass_env_a}"
+        _pass_env_args+=("${_PASS_ENV_EXPANDED}")
       done
-      set -- "${args[@]}"
+      set -- "${_pass_env_args[@]}"
     fi
 
     # Stage 4: exec.
