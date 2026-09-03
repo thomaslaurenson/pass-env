@@ -417,6 +417,10 @@ _pass_env_for_each_var() {
 _pass_env_parse_entry() {
   local _pass_env_parse_buf=""
   _pass_env_for_each_var "$1" _pass_env_parse_buf_emit
+  # An entry of comments and blank lines alone leaves the buffer empty. Print
+  # nothing rather than a blank line: callers turn each line into a statement,
+  # and a blank one becomes a bare 'export' or 'unset'.
+  [[ -n "${_pass_env_parse_buf}" ]] || return 0
   printf '%s\n' "${_pass_env_parse_buf}"
 }
 
@@ -589,6 +593,7 @@ _pass_env_run_with_env() {
 #   $1 - Pass entry path (relative to PASSWORD_STORE_DIR)
 # Outputs:
 #   stdout: marker line, then 'export KEY=QUOTEDVAL' lines, one per variable
+#           (marker alone when the entry defines no variables)
 # Returns:
 #   0 on success, exits 1 on any error (see _pass_env_parse_entry)
 _pass_env_set_env() {
@@ -597,6 +602,10 @@ _pass_env_set_env() {
   local parsed
   parsed="$(_pass_env_parse_entry "$1")"
   printf '%s%s\n' "${PASSENV_ENTRY_MARKER}" "$1"
+  # A bare 'export' is not a no-op: eval'd, it prints every exported variable
+  # and its value, so an entry with no variables would dump the environment
+  # into the terminal of anyone following the documented eval usage.
+  [[ -n "${parsed}" ]] || return 0
   printf '%s\n' "${parsed}" | sed 's/^/export /'
 }
 

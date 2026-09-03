@@ -213,6 +213,38 @@ teardown() {
   [[ -z "${MY_VAR:-}" ]]
 }
 
+# Entries that define no variables
+
+@test "set: emits the marker alone for an entry with no variables" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash "$ENV_BASH" set novars.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "# pass-env entry: novars.env" ]]
+}
+
+@test "set: eval of a variable-free entry does not dump the environment" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash -c "export SECRET_CANARY=canary123; eval \"\$(bash '$ENV_BASH' set novars.env)\""
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"canary123"* ]]
+}
+
+@test "unset: emits nothing for an entry with no variables" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash "$ENV_BASH" unset novars.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ -z "$output" ]]
+}
+
 # run: subprocess injection and isolation
 
 @test "run: injects entry vars into the subprocess" {
