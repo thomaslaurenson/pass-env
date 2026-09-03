@@ -95,6 +95,13 @@ _pass_env_is_dangerous_var() {
     GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|\
     GIT_CONFIG*)
       return 0 ;;
+    # pass and GnuPG's own configuration. An entry that sets these turns the
+    # tool against itself: PASSWORD_STORE_DIR repoints every later pass call at
+    # a store the attacker controls, PASSWORD_STORE_ENABLE_EXTENSIONS with a
+    # store-local .extensions directory turns store write access into code
+    # execution, and GNUPGHOME selects a gpg.conf that can name programs to run.
+    PASSWORD_STORE_*|GNUPGHOME|GPG_*|PINENTRY_*)
+      return 0 ;;
     # Language runtimes: code/path injection on next interpreter start
     PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|\
     PERL5LIB|PERL5OPT|RUBYLIB|RUBYOPT|\

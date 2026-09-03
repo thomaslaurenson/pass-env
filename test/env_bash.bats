@@ -525,6 +525,36 @@ teardown() {
   [[ "$output" =~ "sensitive variable" ]]
 }
 
+@test "set: refuses to set PASSWORD_STORE_DIR from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_store.env"
+  printf 'PASSWORD_STORE_DIR=/tmp/evil-store\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_store.env.gpg"
+  run bash "$ENV_BASH" set danger_store.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_store.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "set: refuses to set PASSWORD_STORE_ENABLE_EXTENSIONS from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_ext.env"
+  printf 'PASSWORD_STORE_ENABLE_EXTENSIONS=true\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_ext.env.gpg"
+  run bash "$ENV_BASH" set danger_ext.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_ext.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set GNUPGHOME from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_gnupg.env"
+  printf 'GNUPGHOME=/tmp/evil-gnupg\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_gnupg.env.gpg"
+  run bash "$ENV_BASH" run danger_gnupg.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_gnupg.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
 # Command after -- : leading VAR=value assignment prefix
 
 @test "run: honors a leading VAR=value assignment before the command" {
