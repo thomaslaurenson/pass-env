@@ -226,3 +226,60 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == '{{MY_VAR}}' ]]
 }
+
+# Reserved namespace and marker validation
+
+# Replace the mock pass with one emitting pre-canned 'pass env set' output.
+#
+# The current extension refuses to emit the lines these tests need, so the
+# skew cases cannot be driven through it. The loader and the extension install
+# as separate files and can be upgraded independently, which is the state
+# being reproduced here.
+#
+# Arguments:
+#   $1 - Exact stdout the fake 'pass env set' should produce
+# Globals:
+#   BATS_TEST_TMPDIR - provided by bats; holds the fake binary and its payload
+_passenv_fake_pass_output() {
+  printf '%s\n' "$1" > "$BATS_TEST_TMPDIR/fake_output"
+  # setup() left a symlink here pointing at test/helpers/mock_pass. Remove it
+  # first: redirecting onto a symlink writes through it and would overwrite the
+  # tracked helper in the repository.
+  rm -f "$BATS_TEST_TMPDIR/bin/pass"
+  cat > "$BATS_TEST_TMPDIR/bin/pass" <<EOF
+#!/usr/bin/env bash
+[[ "\$1" == "env" ]] || exit 1
+cat "$BATS_TEST_TMPDIR/fake_output"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/pass"
+}
+
+@test "set: an entry key of 'current' does not move the tracker key" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_current.env"
+  printf 'current=hijacked.env\nREAL_VAR=realvalue\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+  passenv set "rebind_current.env"
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+  [[ -n "${_PASSENV_TRACKER[rebind_current.env]:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[hijacked.env]:-}" ]]
+  [[ "$REAL_VAR" == "realvalue" ]]
+}
+
+@test "set: drops a reserved _passenv_ key from skewed extension output" {
+  _passenv_fake_pass_output "# pass-env entry: skew.env
+export _passenv_current=hijacked.env
+export SKEW_VAR=skewvalue"
+  passenv set "skew.env"
+  [[ "$SKEW_VAR" == "skewvalue" ]]
+  [[ -n "${_PASSENV_TRACKER[skew.env]:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[hijacked.env]:-}" ]]
+}
+
+@test "set: refuses an unsafe entry name in skewed extension output" {
+  _passenv_fake_pass_output "# pass-env entry: evil\$(touch ${BATS_TEST_TMPDIR}/PWNED).env
+export SKEW_VAR=skewvalue"
+  run passenv set "skew.env"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "refusing unsafe entry name" ]]
+  [[ ! -e "$BATS_TEST_TMPDIR/PWNED" ]]
+}

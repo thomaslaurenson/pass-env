@@ -265,109 +265,129 @@ _passenv_set() {
 #   0 on success
 #   1 if the pass command fails, returns no output, or emits no valid exports
 _passenv_load_one() {
-  local entry="${1:-}"
-  local force="${2:-false}"
+  local _passenv_entry="${1:-}"
+  local _passenv_force="${2:-false}"
 
-  if [[ -n "${entry}" && "${force}" != true && -n "${_PASSENV_TRACKER[$entry]+x}" ]]; then
-    printf 'passenv: %s is already loaded (use --force to reload)\n' "${entry}"
+  if [[ -n "${_passenv_entry}" && "${_passenv_force}" != true \
+        && -n "${_PASSENV_TRACKER[$_passenv_entry]+x}" ]]; then
+    printf 'passenv: %s is already loaded (use --force to reload)\n' "${_passenv_entry}"
     return 0
   fi
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
   # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
-  local pass_args=()
-  [[ -n "${entry}" ]] && pass_args=("${entry}")
-  local output
-  if ! output="$(pass env set "${pass_args[@]}")" ; then
-    printf 'passenv: pass env set failed for: %s\n' "${entry:-<interactive>}" >&2
+  local _passenv_pass_args=()
+  [[ -n "${_passenv_entry}" ]] && _passenv_pass_args=("${_passenv_entry}")
+  local _passenv_output
+  if ! _passenv_output="$(pass env set "${_passenv_pass_args[@]}")" ; then
+    printf 'passenv: pass env set failed for: %s\n' "${_passenv_entry:-<interactive>}" >&2
     return 1
   fi
 
-  if [[ -z "${output}" ]]; then
+  if [[ -z "${_passenv_output}" ]]; then
     printf 'passenv: pass env set returned no output\n' >&2
     return 1
   fi
 
-  # Process the output section by section. 'current' is the entry the
+  # Process the output section by section. '_passenv_current' is the entry the
   # following export lines belong to; it defaults to the requested entry so
   # marker-less output (e.g. an older extension version) still tracks
   # correctly for explicit loads.
-  local current="${entry}"
-  local skip_section=false
-  local line rest key val
-  local any_loaded=false
-  local section_entries=""   # newline-separated, in load order
-  while IFS= read -r line; do
-    case "${line}" in
+  #
+  # Every local here carries the _passenv_ prefix because the eval below runs
+  # in this scope: an entry defining 'current' would otherwise rebind the
+  # tracker key mid-loop, and 'force' or 'skip_section' would steer the loop.
+  local _passenv_current="${_passenv_entry}"
+  local _passenv_skip_section=false
+  local _passenv_line _passenv_rest _passenv_key
+  local _passenv_any_loaded=false
+  local _passenv_section_entries=""   # newline-separated, in load order
+  while IFS= read -r _passenv_line; do
+    case "${_passenv_line}" in
       "# pass-env entry: "*)
-        current="${line#\# pass-env entry: }"
-        skip_section=false
-        if [[ "${force}" != true && -n "${_PASSENV_TRACKER[$current]+x}" ]]; then
+        _passenv_current="${_passenv_line#\# pass-env entry: }"
+        # The extension validates entry names, but the loader and the extension
+        # install as separate files and can version-skew, so re-check before the
+        # name becomes an array subscript: bash expands a command substitution
+        # inside one, including in 'unset arr[key]'.
+        if ! [[ "${_passenv_current}" =~ ^[A-Za-z0-9._/@+-]+$ ]]; then
+          printf 'passenv: refusing unsafe entry name from pass env set output\n' >&2
+          return 1
+        fi
+        _passenv_skip_section=false
+        if [[ "${_passenv_force}" != true \
+              && -n "${_PASSENV_TRACKER[$_passenv_current]+x}" ]]; then
           # Interactive multi-select can include an already-loaded entry.
-          printf 'passenv: %s is already loaded (use --force to reload)\n' "${current}"
-          skip_section=true
+          printf 'passenv: %s is already loaded (use --force to reload)\n' "${_passenv_current}"
+          _passenv_skip_section=true
         fi
         continue
         ;;
       "export "*)
-        [[ "${skip_section}" == true ]] && continue
-        rest="${line#export }"
-        key="${rest%%=*}"
+        [[ "${_passenv_skip_section}" == true ]] && continue
+        _passenv_rest="${_passenv_line#export }"
+        _passenv_key="${_passenv_rest%%=*}"
         # Strict identifier guard: drop anything that is not export KEY=...
         # NOTE: this validates the key name only; it does NOT constrain values.
         # Protection against value-level injection comes entirely from
         # printf %q in the extension. Both layers are required.
-        [[ "${rest}" == *=* ]] || continue
-        [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ "${_passenv_rest}" == *=* ]] || continue
+        [[ "${_passenv_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        # Reserved namespace, checked here as well as in the extension so the
+        # two halves stay safe independently when their versions differ.
+        case "${_passenv_key}" in
+          _passenv_*|_PASSENV_*) continue ;;
+        esac
 
-        if [[ -z "${current}" ]]; then
+        if [[ -z "${_passenv_current}" ]]; then
           # No entry name and no marker (should not happen with a current
           # extension); fall back to a stable synthetic key.
-          current="__passenv_interactive"
+          _passenv_current="__passenv_interactive"
         fi
 
         # Snapshot the pre-load state the first time this var is recorded
         # for this entry, so unset can restore it. Re-loads with --force keep
         # the original (true pre-load) snapshot.
-        case " ${_PASSENV_TRACKER[$current]:-} " in
-          *" ${key} "*) : ;;  # already tracked; keep existing snapshot
+        case " ${_PASSENV_TRACKER[$_passenv_current]:-} " in
+          *" ${_passenv_key} "*) : ;;  # already tracked; keep existing snapshot
           *)
-            _PASSENV_RESTORE[$current]="${_PASSENV_RESTORE[$current]:-}${_PASSENV_RESTORE[$current]:+
-}$(_passenv_snapshot_stmt "${key}")"
-            _PASSENV_TRACKER[$current]="${_PASSENV_TRACKER[$current]:-}${_PASSENV_TRACKER[$current]:+ }${key}"
+            _PASSENV_RESTORE[$_passenv_current]="${_PASSENV_RESTORE[$_passenv_current]:-}${_PASSENV_RESTORE[$_passenv_current]:+
+}$(_passenv_snapshot_stmt "${_passenv_key}")"
+            _PASSENV_TRACKER[$_passenv_current]="${_PASSENV_TRACKER[$_passenv_current]:-}${_PASSENV_TRACKER[$_passenv_current]:+ }${_passenv_key}"
             ;;
         esac
 
-        eval "${line}"
-        any_loaded=true
+        eval "${_passenv_line}"
+        _passenv_any_loaded=true
         case "
-${section_entries}
+${_passenv_section_entries}
 " in
           *"
-${current}
+${_passenv_current}
 "*) : ;;
-          *) section_entries="${section_entries}${section_entries:+
-}${current}" ;;
+          *) _passenv_section_entries="${_passenv_section_entries}${_passenv_section_entries:+
+}${_passenv_current}" ;;
         esac
         ;;
       *) : ;;  # ignore stray lines (blank lines, debug output, etc.)
     esac
-  done <<< "${output}"
+  done <<< "${_passenv_output}"
 
-  if [[ "${any_loaded}" != true ]]; then
+  if [[ "${_passenv_any_loaded}" != true ]]; then
     # Nothing was eval'd. If sections were skipped as already loaded that is
     # a success; otherwise the output contained no valid export lines.
-    if [[ "${skip_section}" == true ]]; then
+    if [[ "${_passenv_skip_section}" == true ]]; then
       return 0
     fi
     printf 'passenv: no valid export lines found in output\n' >&2
     return 1
   fi
 
-  while IFS= read -r current; do
-    [[ -n "${current}" ]] || continue
-    printf 'passenv: loaded %s -> %s\n' "${current}" "${_PASSENV_TRACKER[$current]}"
-  done <<< "${section_entries}"
+  while IFS= read -r _passenv_current; do
+    [[ -n "${_passenv_current}" ]] || continue
+    printf 'passenv: loaded %s -> %s\n' \
+      "${_passenv_current}" "${_PASSENV_TRACKER[$_passenv_current]}"
+  done <<< "${_passenv_section_entries}"
 }
 
 # Restore variables for one or more loaded entries and remove them from the

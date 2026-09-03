@@ -76,4 +76,20 @@ if [[ -n "${MY_OTHER+x}" ]]; then
   exit 1
 fi
 
+# Test 6: entry content cannot rebind the loader local holding the tracker key.
+content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_current.env"
+printf 'current=hijacked.env\nREAL_VAR=realvalue\n' > "$content_fixture"
+touch "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+passenv set "rebind_current.env" >/dev/null
+rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+if [[ -z "${_PASSENV_TRACKER[rebind_current.env]:-}" ]]; then
+  printf 'FAIL: rebind_current.env not tracked under its real name\n' >&2
+  exit 1
+fi
+if [[ -n "${_PASSENV_TRACKER[hijacked.env]:-}" ]]; then
+  printf 'FAIL: entry content rebound the tracker key to hijacked.env\n' >&2
+  exit 1
+fi
+passenv unset "rebind_current.env" >/dev/null
+
 printf 'ok\n'
