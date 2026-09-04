@@ -194,9 +194,15 @@ detect_os() {
 #
 # If src/env.bash is found relative to this script's location, LOCAL_SRC is
 # set to the repository root so the installer can skip the download step.
-# When piped from curl, BASH_SOURCE[0] is empty or '/dev/stdin', so local-source
-# detection is skipped to avoid silently installing from an arbitrary parent
-# directory in the current working directory.
+#
+# A script piped into bash has no file behind it, and must never take that
+# path: there is no repository, so the parent of whatever directory the user
+# happens to be standing in would be installed instead, with no download and no
+# checksum. Name comparisons alone do not detect that. This function is called
+# from main(), and for a script read from stdin bash reports BASH_SOURCE[0]
+# inside a function as the literal string "main", which is not empty, not
+# /dev/stdin and not bash. Requiring the name to be an existing file is what
+# actually settles it.
 #
 # Globals:
 #   LOCAL_SRC - set to absolute repo root path, or left empty
@@ -207,9 +213,11 @@ detect_local_source() {
   if [[ -z "${src}" || "${src}" == "/dev/stdin" || "${src}" == "bash" ]]; then
     return 0
   fi
+  # The decisive check: no readable file, no local install.
+  [[ -f "${src}" ]] || return 0
 
   local script_dir
-  script_dir="$(cd "$(dirname "${src}")" && pwd)"
+  script_dir="$(cd "$(dirname "${src}")" && pwd)" || return 0
   local candidate="${script_dir}/.."
   if [[ -f "${candidate}/src/env.bash" ]]; then
     LOCAL_SRC="$(cd "${candidate}" && pwd)"
