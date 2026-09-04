@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-readonly PASSENV_VERSION="0.3.1"
+readonly PASSENV_VERSION="0.4.0"
 
 # Marker line emitted before each entry's exports by the `set` subcommand.
 # contrib/pass-env-init.sh parses these to attribute variables to entries

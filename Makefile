@@ -6,6 +6,23 @@ BASHCOMP_DIR  ?= /etc/bash_completion.d
 ZSHCOMP_DIR   ?= /usr/local/share/zsh/site-functions
 
 BATS_VERSION ?= v1.13.0
+
+# Lint inputs. shellcheck reads the dialect from a shebang, so only the files
+# without one name it explicitly. shellcheck has no zsh dialect at all
+# ("Unknown shell: zsh"), which is why the zsh files get zsh -n instead.
+SHELLCHECK_FILES   := src/env.bash \
+                      scripts/install.sh \
+                      contrib/pass-env-uninstall.sh \
+                      test/helpers/mock_pass \
+                      test/helpers/mock_fzf
+SHELLCHECK_SOURCED := contrib/pass-env-init.sh \
+                      completion/pass-env.bash.completion
+BASH_SYNTAX_FILES  := src/env.bash \
+                      scripts/install.sh \
+                      contrib/pass-env-uninstall.sh \
+                      completion/pass-env.bash.completion
+ZSH_SYNTAX_FILES   := completion/_pass-env \
+                      test/zsh_integration.zsh
 TAG          ?= $(shell git describe --tags --abbrev=0 2>/dev/null)
 
 .PHONY: help
@@ -15,40 +32,28 @@ help: ## Show this help message
 
 # LINT
 .PHONY: lint
-lint: ## Run shellcheck and bash -n on all scripts
-	@printf 'shellcheck  src/env.bash ... '
-	@shellcheck -s bash src/env.bash \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'shellcheck  contrib/pass-env-init.sh ... '
-	@shellcheck -s bash contrib/pass-env-init.sh \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'shellcheck  scripts/install.sh ... '
-	@shellcheck -s bash scripts/install.sh \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'shellcheck  contrib/pass-env-uninstall.sh ... '
-	@shellcheck -s bash contrib/pass-env-uninstall.sh \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'bash -n     src/env.bash ... '
-	@bash -n src/env.bash \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'bash -n     scripts/install.sh ... '
-	@bash -n scripts/install.sh \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'bash -n     contrib/pass-env-uninstall.sh ... '
-	@bash -n contrib/pass-env-uninstall.sh \
-	  && printf 'ok\n' \
-	  || { printf 'fail\n'; exit 1; }
-	@printf 'bash source contrib/pass-env-init.sh ... '
+lint: ## Run shellcheck and syntax checks on every shipped script
+	@for f in $(SHELLCHECK_FILES); do \
+	  printf 'shellcheck   %-38s ' "$$f"; \
+	  shellcheck "$$f" && printf 'ok\n' || { printf 'fail\n'; exit 1; }; \
+	done
+	@for f in $(SHELLCHECK_SOURCED); do \
+	  printf 'shellcheck   %-38s ' "$$f"; \
+	  shellcheck -s bash "$$f" && printf 'ok\n' || { printf 'fail\n'; exit 1; }; \
+	done
+	@for f in $(BASH_SYNTAX_FILES); do \
+	  printf 'bash -n      %-38s ' "$$f"; \
+	  bash -n "$$f" && printf 'ok\n' || { printf 'fail\n'; exit 1; }; \
+	done
+	@for f in $(ZSH_SYNTAX_FILES); do \
+	  printf 'zsh -n       %-38s ' "$$f"; \
+	  zsh -n "$$f" && printf 'ok\n' || { printf 'fail\n'; exit 1; }; \
+	done
+	@printf 'bash source  %-38s ' 'contrib/pass-env-init.sh'
 	@bash -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
-	@printf 'zsh  source contrib/pass-env-init.sh ... '
+	@printf 'zsh source   %-38s ' 'contrib/pass-env-init.sh'
 	@zsh -c 'source contrib/pass-env-init.sh' \
 	  && printf 'ok\n' \
 	  || { printf 'fail\n'; exit 1; }
@@ -56,7 +61,10 @@ lint: ## Run shellcheck and bash -n on all scripts
 # TEST
 .PHONY: test
 test: ## Run bats test suite and zsh integration test
-	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+	@# Directory, not a file list, so a new .bats file is picked up automatically.
+	@# Never add -r: it would descend into test/extern/bats and run the vendored
+	@# bats project's own suite as though it were ours.
+	test/extern/bats/bin/bats test/
 	@printf 'zsh integration  contrib/pass-env-init.sh ... '
 	@zsh test/zsh_integration.zsh \
 	  && printf 'ok\n' \

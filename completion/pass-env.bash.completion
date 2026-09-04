@@ -32,28 +32,60 @@ __pass_env_list_entries() {
 
 # Append entry completions for the current token to COMPREPLY.
 #
-# Iterates over all store entries and performs a literal prefix match
-# against the current token. Does NOT use compgen -W, which would perform
-# shell expansion on each candidate, an attacker who can write to the
-# password store could embed $() or backticks in an entry filename and
-# trigger command injection on a single TAB press.
+# Iterates over all store entries and performs a literal prefix match against
+# the current token. Does NOT use compgen -W, which would perform shell
+# expansion on each candidate, an attacker who can write to the password store
+# could embed $() or backticks in an entry filename and trigger command
+# injection on a single TAB press.
+#
+# Store filenames are plaintext and attacker-controlled, so each candidate is
+# shell-escaped with %q before it reaches COMPREPLY. Avoiding compgen only
+# closes the expansion that would happen at TAB time; readline still inserts
+# the candidate onto the command line, where an unescaped $(...) runs as soon
+# as the user presses Enter, before pass is invoked and before entry-name
+# validation can see it. %q leaves ordinary names such as github/pat.env and
+# my-entry.env exactly as they are.
 #
 # Arguments:
 #   $1 - Current token being completed
 # Globals:
-#   COMPREPLY - appended with matching entries
+#   COMPREPLY - appended with matching entries, shell-escaped
 # Returns:
 #   0 always
 __pass_env_complete_entries() {
-  local cur="$1" entry
+  local cur="$1" entry esc
   # Disable filename path-stripping: pass is registered with `complete -o filenames`
   # which causes bash to strip directory components from COMPREPLY entries.
   # compopt +o filenames overrides that for this completion so full paths like
-  # github/pat.env are preserved as-is.
+  # github/pat.env are preserved as-is. It also stops readline escaping the
+  # candidate a second time on top of the %q applied below.
   compopt +o filenames 2>/dev/null
   while IFS= read -r entry; do
-    [[ "$entry" == "$cur"* ]] && COMPREPLY+=( "$entry" )
+    [[ "$entry" == "$cur"* ]] || continue
+    printf -v esc '%q' "$entry"
+    COMPREPLY+=( "$esc" )
   done < <(__pass_env_list_entries)
+}
+
+# Append the words of a fixed list that match the current token to COMPREPLY.
+#
+# compgen -W is safe here and nowhere else in this file: every list passed to
+# this helper is a literal declared above, never a name read out of the
+# password store. The injection that rules compgen out for entry names (see
+# __pass_env_complete_entries) needs attacker-controlled words to expand.
+#
+# Arguments:
+#   $1 - Space-separated list of candidate words
+#   $2 - Current token being completed
+# Globals:
+#   COMPREPLY - appended with matching words
+# Returns:
+#   0 always
+__pass_env_complete_words() {
+  # Splitting compgen's output is the point here, and the word list is a
+  # literal from this file, so there is nothing to inject.
+  # shellcheck disable=SC2207
+  COMPREPLY+=( $(compgen -W "$1" -- "$2") )
 }
 
 # Main bash completion function for `pass env`.
@@ -89,7 +121,8 @@ __pass_env() {
   local subcmd_pos=$((env_idx+1))
   if (( cword == subcmd_pos )) || [[ "$subcmd" == -* ]]; then
     local subs="run set unset list version help"
-    COMPREPLY=( $(compgen -W "$subs" -- "$cur") )
+    COMPREPLY=()
+    __pass_env_complete_words "$subs" "$cur"
     return 0
   fi
 
@@ -120,7 +153,7 @@ __pass_env() {
         return 0
       fi
 
-      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
+      __pass_env_complete_words "--no-expand --" "$cur"
       # Also allow entries directly (convenience)
       __pass_env_complete_entries "$cur"
       ;;
@@ -137,7 +170,8 @@ __pass_env() {
 
     *)
       # Unknown subcommand -> show subcmds
-      COMPREPLY=( $(compgen -W "run set unset list version help" -- "$cur") )
+      COMPREPLY=()
+      __pass_env_complete_words "run set unset list version help" "$cur"
       ;;
   esac
 }
@@ -163,6 +197,9 @@ __password_store_extension_complete_env() { __pass_env; }
 # Returns:
 #   0 always
 __passenv() {
+  # prev is unused here, but _init_completion assigns it; dropping it from
+  # this list would let it become a global in the user's shell.
+  # shellcheck disable=SC2034
   local cur prev words cword
   _init_completion -n : || return
 
@@ -174,7 +211,8 @@ __passenv() {
 
   # Complete the subcommand token itself.
   if (( cword == 1 )); then
-    COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+    COMPREPLY=()
+    __pass_env_complete_words "set unset run list loaded version help" "$cur"
     return 0
   fi
 
@@ -186,14 +224,16 @@ __passenv() {
     unset)
       # Prefer loaded entries from the tracker; fall back to the full store.
       if [[ ${#_PASSENV_TRACKER[@]} -gt 0 ]]; then
-        # Literal prefix match, never `compgen -W`: compgen expands each word,
-        # so a loaded entry name containing $(...) or backticks (an attacker who
-        # can write the store controls filenames) would execute on a single TAB.
-        # See __pass_env_complete_entries for the same reasoning.
+        # Literal prefix match and %q escaping, never `compgen -W`. See
+        # __pass_env_complete_entries for both halves of the reasoning: compgen
+        # would expand a candidate at TAB time, and an unescaped one runs when
+        # readline inserts it and the user presses Enter.
         compopt +o filenames 2>/dev/null
-        local k
+        local k esc
         for k in "${!_PASSENV_TRACKER[@]}"; do
-          [[ "$k" == "$cur"* ]] && COMPREPLY+=( "$k" )
+          [[ "$k" == "$cur"* ]] || continue
+          printf -v esc '%q' "$k"
+          COMPREPLY+=( "$esc" )
         done
       else
         __pass_env_complete_entries "$cur"
@@ -215,7 +255,7 @@ __passenv() {
         _command_offset $(( ddash_pos + 1 ))
         return 0
       fi
-      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
+      __pass_env_complete_words "--no-expand --" "$cur"
       __pass_env_complete_entries "$cur"
       ;;
 
@@ -225,7 +265,8 @@ __passenv() {
       ;;
 
     *)
-      COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+      COMPREPLY=()
+      __pass_env_complete_words "set unset run list loaded version help" "$cur"
       ;;
   esac
 }
