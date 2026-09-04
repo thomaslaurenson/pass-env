@@ -56,6 +56,27 @@ __pass_env_complete_entries() {
   done < <(__pass_env_list_entries)
 }
 
+# Append the words of a fixed list that match the current token to COMPREPLY.
+#
+# compgen -W is safe here and nowhere else in this file: every list passed to
+# this helper is a literal declared above, never a name read out of the
+# password store. The injection that rules compgen out for entry names (see
+# __pass_env_complete_entries) needs attacker-controlled words to expand.
+#
+# Arguments:
+#   $1 - Space-separated list of candidate words
+#   $2 - Current token being completed
+# Globals:
+#   COMPREPLY - appended with matching words
+# Returns:
+#   0 always
+__pass_env_complete_words() {
+  # Splitting compgen's output is the point here, and the word list is a
+  # literal from this file, so there is nothing to inject.
+  # shellcheck disable=SC2207
+  COMPREPLY+=( $(compgen -W "$1" -- "$2") )
+}
+
 # Main bash completion function for `pass env`.
 #
 # Locates the `env` token in COMP_WORDS, derives the subcommand, and
@@ -89,7 +110,8 @@ __pass_env() {
   local subcmd_pos=$((env_idx+1))
   if (( cword == subcmd_pos )) || [[ "$subcmd" == -* ]]; then
     local subs="run set unset list version help"
-    COMPREPLY=( $(compgen -W "$subs" -- "$cur") )
+    COMPREPLY=()
+    __pass_env_complete_words "$subs" "$cur"
     return 0
   fi
 
@@ -120,7 +142,7 @@ __pass_env() {
         return 0
       fi
 
-      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
+      __pass_env_complete_words "--no-expand --" "$cur"
       # Also allow entries directly (convenience)
       __pass_env_complete_entries "$cur"
       ;;
@@ -137,7 +159,8 @@ __pass_env() {
 
     *)
       # Unknown subcommand -> show subcmds
-      COMPREPLY=( $(compgen -W "run set unset list version help" -- "$cur") )
+      COMPREPLY=()
+      __pass_env_complete_words "run set unset list version help" "$cur"
       ;;
   esac
 }
@@ -163,6 +186,9 @@ __password_store_extension_complete_env() { __pass_env; }
 # Returns:
 #   0 always
 __passenv() {
+  # prev is unused here, but _init_completion assigns it; dropping it from
+  # this list would let it become a global in the user's shell.
+  # shellcheck disable=SC2034
   local cur prev words cword
   _init_completion -n : || return
 
@@ -174,7 +200,8 @@ __passenv() {
 
   # Complete the subcommand token itself.
   if (( cword == 1 )); then
-    COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+    COMPREPLY=()
+    __pass_env_complete_words "set unset run list loaded version help" "$cur"
     return 0
   fi
 
@@ -215,7 +242,7 @@ __passenv() {
         _command_offset $(( ddash_pos + 1 ))
         return 0
       fi
-      COMPREPLY+=( $(compgen -W "--no-expand --" -- "$cur") )
+      __pass_env_complete_words "--no-expand --" "$cur"
       __pass_env_complete_entries "$cur"
       ;;
 
@@ -225,7 +252,8 @@ __passenv() {
       ;;
 
     *)
-      COMPREPLY=( $(compgen -W "set unset run list loaded version help" -- "$cur") )
+      COMPREPLY=()
+      __pass_env_complete_words "set unset run list loaded version help" "$cur"
       ;;
   esac
 }
