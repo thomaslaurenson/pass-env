@@ -61,7 +61,10 @@ lint: ## Run shellcheck and syntax checks on every shipped script
 # TEST
 .PHONY: test
 test: ## Run bats test suite and zsh integration test
-	test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+	@# Directory, not a file list, so a new .bats file is picked up automatically.
+	@# Never add -r: it would descend into test/extern/bats and run the vendored
+	@# bats project's own suite as though it were ours.
+	test/extern/bats/bin/bats test/
 	@printf 'zsh integration  contrib/pass-env-init.sh ... '
 	@zsh test/zsh_integration.zsh \
 	  && printf 'ok\n' \
