@@ -61,11 +61,7 @@ complete_with() {
   COMP_WORDS=("$@")
   COMP_CWORD=$(( $# - 1 ))
   COMPREPLY=()
-  # The status is discarded on purpose. __pass_env_complete_entries ends on a
-  # failed prefix match whenever the last store entry does not match the token,
-  # so it returns non-zero despite documenting "Returns: 0 always". bash ignores
-  # a completion function's status, and COMPREPLY is the contract under test.
-  "$fn" || true
+  "$fn"
 }
 
 # pass env: subcommand completion
@@ -156,4 +152,60 @@ complete_with() {
 @test "passenv run: delegates to the command after the double dash" {
   complete_with __passenv passenv run myentry.env -- somecmd ""
   [[ "${#COMMAND_OFFSET_CALLS[@]}" -eq 1 ]]
+}
+
+# Escaping of attacker-controlled candidates
+
+# Point the completion at a store containing a hostile filename.
+#
+# Uses a throwaway store rather than test/fixtures/store so a failure cannot
+# leave a booby-trapped filename behind for the rest of the suite.
+#
+# Arguments:
+#   $1 - Filename to create, without the .gpg suffix
+setup_hostile_store() {
+  export PASSWORD_STORE_DIR="$BATS_TEST_TMPDIR/hostile-store"
+  mkdir -p "$PASSWORD_STORE_DIR"
+  touch "$PASSWORD_STORE_DIR/$1.gpg"
+}
+
+@test "pass env set: a command substitution in a filename is escaped" {
+  setup_hostile_store 'zz$(id).env'
+  complete_with __pass_env pass env set "zz"
+  [[ "${#COMPREPLY[@]}" -eq 1 ]]
+  [[ "${COMPREPLY[0]}" == 'zz\$\(id\).env' ]]
+}
+
+@test "pass env set: a backtick in a filename is escaped" {
+  setup_hostile_store 'bt`id`.env'
+  complete_with __pass_env pass env set "bt"
+  [[ "${COMPREPLY[0]}" != 'bt`id`.env' ]]
+  [[ "${COMPREPLY[0]}" == *'\`'* ]]
+}
+
+@test "pass env set: a semicolon in a filename is escaped" {
+  setup_hostile_store 'semi;touch pwn.env'
+  complete_with __pass_env pass env set "semi"
+  [[ "${COMPREPLY[0]}" == *'\;'* ]]
+}
+
+@test "pass env set: a space in a filename stays one candidate" {
+  setup_hostile_store 'sp ace.env'
+  complete_with __pass_env pass env set "sp"
+  [[ "${#COMPREPLY[@]}" -eq 1 ]]
+  [[ "${COMPREPLY[0]}" == 'sp\ ace.env' ]]
+}
+
+@test "pass env set: an ordinary nested path is left unchanged" {
+  export PASSWORD_STORE_DIR="$BATS_TEST_TMPDIR/plain-store"
+  mkdir -p "$PASSWORD_STORE_DIR/github"
+  touch "$PASSWORD_STORE_DIR/github/pat.env.gpg"
+  complete_with __pass_env pass env set "git"
+  [[ "${COMPREPLY[0]}" == "github/pat.env" ]]
+}
+
+@test "passenv unset: a hostile tracker key is escaped" {
+  _PASSENV_TRACKER['tk$(id).env']="SOME_VAR"
+  complete_with __passenv passenv unset "tk"
+  [[ "${COMPREPLY[0]}" == 'tk\$\(id\).env' ]]
 }
