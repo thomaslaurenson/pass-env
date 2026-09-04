@@ -302,3 +302,53 @@ export SKEW_VAR=skewvalue"
   [ "$status" -eq 0 ]
   [[ "$output" == "unset ABSENT_VAR" ]]
 }
+
+# Shared variables across entries
+
+@test "unset: a variable another entry still provides is left alone" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  unset SHARED_VAR 2>/dev/null || true
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_a.env"
+  local after_first="${SHARED_VAR:-<unset>}"
+  passenv unset "shared_b.env"
+  local after_second="${SHARED_VAR+set}"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$after_first" == "from_b" ]]
+  [[ -z "$after_second" ]]
+}
+
+@test "unset: a shared variable does not resurrect after every entry is unset" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  export SHARED_VAR=original
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_a.env"
+  passenv unset "shared_b.env"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$SHARED_VAR" == "original" ]]
+}
+
+@test "unset: the original value is restored whichever order entries are unset" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  export SHARED_VAR=original
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_b.env"
+  passenv unset "shared_a.env"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$SHARED_VAR" == "original" ]]
+}
