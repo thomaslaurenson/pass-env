@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 - 2026-09-04
+
+### Changed
+
+- Refuse prompt, pager, git, pass and GnuPG variables, and internal names, from entries
+- Restore a variable shared by several entries only once every entry is unset
+
+### Fixed
+
+- Prevent entry content from running commands through run, set and the shell loader
+- Escape entry names in bash completion so a hostile filename cannot run on TAB
+- Download and verify the release when the installer is piped from curl
+- Stop set printing the whole environment for an entry that defines no variables
+- Keep the shell's traps and dialect detection intact under zsh
+
 ## 0.3.1 - 2026-08-14
 
 ### Fixed
