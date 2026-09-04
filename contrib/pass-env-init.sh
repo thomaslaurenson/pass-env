@@ -490,37 +490,31 @@ _passenv_unset() {
     local tmp_preview
     tmp_preview="$(mktemp)" || { printf 'passenv: failed to create temp file\n' >&2; return 1; }
 
-    # Save existing trap state before overwriting. passenv is a shell function,
-    # so trap modifies the interactive shell's global trap table directly. Without
-    # saving/restoring, any EXIT/INT/TERM traps the user set would be destroyed.
-    local prev_int prev_term prev_exit
-    prev_int="$(trap -p INT)"
-    prev_term="$(trap -p TERM)"
-    prev_exit="$(trap -p EXIT)"
-
-    trap 'rm -f "${tmp_preview}"' INT TERM EXIT
-    _passenv_keys | while IFS= read -r k; do
-      printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
-    done > "${tmp_preview}"
-
+    # The picker runs inside a command substitution, so the cleanup trap below
+    # belongs to that subshell. Setting a trap in the function body instead
+    # would write to the interactive shell's own trap table: passenv is a shell
+    # function, not a subprocess. Saving and restoring around it is not an
+    # option either, because zsh's `trap -p` prints nothing, so the saved value
+    # is empty and the user's INT, TERM and EXIT handlers are destroyed rather
+    # than put back.
     local selected
-    selected="$(awk -F'\t' '{print $1}' "${tmp_preview}" \
-      | fzf --multi \
-            --height=40% \
-            --layout=reverse \
-            --border \
-            --prompt="Unset entry: " \
-            --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-            --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "${tmp_preview}")")"
+    selected="$(
+      trap 'rm -f "${tmp_preview}"' EXIT INT TERM
+      _passenv_keys | while IFS= read -r k; do
+        printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
+      done > "${tmp_preview}"
+      awk -F'\t' '{print $1}' "${tmp_preview}" \
+        | fzf --multi \
+              --height=40% \
+              --layout=reverse \
+              --border \
+              --prompt="Unset entry: " \
+              --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
+              --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "${tmp_preview}")"
+    )"
+    # Belt and braces: the subshell trap already removed this on every exit
+    # path, including a Ctrl-C during fzf.
     rm -f "${tmp_preview}"
-
-    # Restore previous traps. trap -p output is eval-safe: the shell itself
-    # generates it with proper quoting. The :-: default is a no-op command,
-    # used when no trap was previously set (trap -p returns empty string).
-    trap - INT TERM EXIT
-    eval "${prev_int:-:}"
-    eval "${prev_term:-:}"
-    eval "${prev_exit:-:}"
 
     [[ -z "${selected}" ]] && { printf 'passenv: no entry selected\n'; return 0; }
     while IFS= read -r e; do

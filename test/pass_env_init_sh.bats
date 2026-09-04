@@ -352,3 +352,34 @@ export SKEW_VAR=skewvalue"
     "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
   [[ "$SHARED_VAR" == "original" ]]
 }
+
+# Interactive unset picker: trap and temp file handling
+
+@test "unset: the picker leaves the shell's own INT trap intact" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  trap 'printf "user trap\n"' INT
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  local after
+  after="$(trap -p INT)"
+  trap - INT
+  [[ "$after" =~ "user trap" ]]
+}
+
+@test "unset: the picker leaves no preview file behind" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  local before after
+  before="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  after="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
+  [[ "$after" -le "$before" ]]
+}
+
+@test "unset: the picker's selection is applied" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  [[ -z "${MY_VAR:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[myentry.env]:-}" ]]
+}

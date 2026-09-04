@@ -103,4 +103,17 @@ if [[ "$stmt" != 'export PRESET_VAR=presetvalue' ]]; then
 fi
 unset PRESET_VAR
 
+# Test 8: the interactive unset picker does not destroy the shell's traps.
+# zsh's `trap -p` prints nothing, so a save-and-restore around the picker would
+# silently discard whatever the user had set.
+ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+passenv set "myentry.env" >/dev/null
+trap 'printf "user trap\n"' INT
+MOCK_FZF_OUTPUT="myentry.env" passenv unset >/dev/null
+if ! trap | grep -q 'user trap'; then
+  printf 'FAIL: the unset picker destroyed the INT trap under zsh\n' >&2
+  exit 1
+fi
+trap - INT
+
 printf 'ok\n'
