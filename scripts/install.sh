@@ -17,17 +17,32 @@ readonly YELLOW='\033[1;33m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
+# Print one tagged status line.
+#
+# Every line this script prints carries a leading uppercase tag in a fixed
+# column, so a run can be read straight down its left edge. Anything a trailing
+# marker used to convey, such as why a path was skipped, belongs in the message
+# instead: a tag per reason grows a vocabulary nobody can scan.
+#
+# Arguments:
+#   $1 - Colour escape for the tag
+#   $2 - Tag text, without brackets
+#   $3 - Message text
+status() {
+  printf '%b[%s]%b%*s%s\n' "$1" "$2" "$NC" "$(( 9 - ${#2} ))" "" "$3"
+}
+
 # Print an info message to stdout.
 #
 # Arguments:
 #   $1 - Message text
-info()  { printf "${GREEN}[INFO]${NC}  %s\n" "$1"; }
+info()    { status "$GREEN"  INFO    "$1"; }
 
 # Print a warning to stdout.
 #
 # Arguments:
 #   $1 - Message text
-warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
+warn()    { status "$YELLOW" WARN    "$1"; }
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -35,19 +50,32 @@ warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
 #   $1 - Message text
 # Returns:
 #   exits 1
-error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
+error()   { status "$RED"    ERROR   "$1" >&2; exit 1; }
 
 # Print a sub-step line to stdout.
 #
 # Arguments:
 #   $1 - Message text
-step()  { printf "  ${CYAN} - ${NC} %s\n" "$1"; }
+step()    { status "$CYAN"   STEP    "$1"; }
 
-# Print a green [added] line for an installed file path.
+# Print a line recording a file this script placed on disk.
 #
 # Arguments:
 #   $1 - Destination file path
-added() { printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "$1"; }
+added()   { status "$GREEN"  ADDED   "$1"; }
+
+# Print a line describing what a real run would have done.
+#
+# Arguments:
+#   $1 - Message text
+dryrun()  { status "$CYAN"   DRY-RUN "$1"; }
+
+# Print a line recording something already in place, left alone.
+#
+# Arguments:
+#   $1 - Path or description
+#   $2 - Short reason, shown in brackets after the path
+skipped() { status "$GREEN"  SKIPPED "$1 ($2)"; }
 
 # Exit with an error if pass is not installed.
 #
@@ -344,7 +372,7 @@ resolve_paths() {
 maybe_mkdir() {
   local dir="$1"
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] would create: ${dir}"
+    dryrun "would create: ${dir}"
     return 0
   fi
   if mkdir -p "${dir}" 2>/dev/null; then
@@ -379,7 +407,7 @@ maybe_install() {
   dest_dir="$(dirname "${dest}")"
 
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] would install: ${src} -> ${dest}"
+    dryrun "would install: ${src} -> ${dest}"
     return 0
   fi
   if [[ -w "${dest_dir}" ]]; then
@@ -407,7 +435,7 @@ maybe_install() {
 write_manifest() {
   local manifest="${INIT_SCRIPT_DIR}/install-manifest.txt"
   if [[ "$DRY_RUN" == true ]]; then
-    info "[dry-run] would write manifest: ${manifest}"
+    dryrun "would write manifest: ${manifest}"
     return 0
   fi
   local tmp_manifest
@@ -689,7 +717,7 @@ inject_rc() {
   ensure_rc_file "${rc_file}"
 
   if grep -qF "$RC_SENTINEL_BEGIN" "${rc_file}"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
+    skipped "${rc_file}" "block already present"
     return 0
   fi
 
@@ -700,7 +728,7 @@ ${RC_SENTINEL_BEGIN}
 [[ -f "${init_script_path}" ]] && source "${init_script_path}"
 ${RC_SENTINEL_END}
 EOF
-  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "${rc_file}"
+  added "${rc_file}"
 }
 
 # Append a guarded export block for PASSWORD_STORE_ENABLE_EXTENSIONS to a
@@ -724,7 +752,7 @@ inject_extensions_rc() {
   ensure_rc_file "${rc_file}"
 
   if grep -qF "$EXT_SENTINEL_BEGIN" "${rc_file}"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "${rc_file}"
+    skipped "${rc_file}" "block already present"
     return 0
   fi
 
@@ -735,7 +763,7 @@ ${EXT_SENTINEL_BEGIN}
 export PASSWORD_STORE_ENABLE_EXTENSIONS=true
 ${EXT_SENTINEL_END}
 EOF
-  printf "  ${GREEN}-${NC} %s  ${GREEN}[added]${NC}\n" "${rc_file}"
+  added "${rc_file}"
 }
 
 # Print a pre-install summary of resolved paths and options.

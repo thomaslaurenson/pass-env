@@ -18,17 +18,33 @@ readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m'
 
+# Print one tagged status line.
+#
+# Every line this script prints carries a leading uppercase tag in a fixed
+# column, so a run can be read straight down its left edge. Anything a trailing
+# marker used to convey, such as why a path was kept, belongs in the message
+# instead: a tag per reason grows a vocabulary nobody can scan. Mirrors the
+# helper of the same name in scripts/install.sh.
+#
+# Arguments:
+#   $1 - Colour escape for the tag
+#   $2 - Tag text, without brackets
+#   $3 - Message text
+status() {
+  printf '%b[%s]%b%*s%s\n' "$1" "$2" "$NC" "$(( 9 - ${#2} ))" "" "$3"
+}
+
 # Print an info message to stdout.
 #
 # Arguments:
 #   $1 - Message text
-info()  { printf "${GREEN}[INFO]${NC}  %s\n" "$1"; }
+info()    { status "$GREEN"  INFO    "$1"; }
 
 # Print a warning to stdout.
 #
 # Arguments:
 #   $1 - Message text
-warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
+warn()    { status "$YELLOW" WARN    "$1"; }
 
 # Print an error message to stderr and exit with status 1.
 #
@@ -36,7 +52,27 @@ warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
 #   $1 - Message text
 # Returns:
 #   exits 1
-error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
+error()   { status "$RED"    ERROR   "$1" >&2; exit 1; }
+
+# Print a line recording something removed from disk.
+#
+# Arguments:
+#   $1 - Path that was removed
+removed() { status "$RED"    REMOVED "$1"; }
+
+# Print a line recording something left in place.
+#
+# Arguments:
+#   $1 - Path or description
+#   $2 - Short reason, shown in brackets after the path
+kept()    { status "$YELLOW" KEPT    "$1 ($2)"; }
+
+# Print a line recording something that needed no action.
+#
+# Arguments:
+#   $1 - Path or description
+#   $2 - Short reason, shown in brackets after the path
+skipped() { status "$GREEN"  SKIPPED "$1 ($2)"; }
 
 # Detected OS; set in main() and reused by portable_sed_inplace.
 _OS=""
@@ -135,7 +171,7 @@ resolve_paths() {
 maybe_rm() {
   local target="$1"
   if [[ ! -e "$target" ]]; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[skipped]${NC}\n" "$target"
+    skipped "$target" "not present"
     return 0
   fi
   if [[ -w "$(dirname "$target")" ]]; then
@@ -143,7 +179,7 @@ maybe_rm() {
   else
     sudo rm -f "$target"
   fi
-  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$target"
+  removed "$target"
 }
 
 # Remove a directory only when it exists and is empty.
@@ -170,9 +206,9 @@ maybe_rmdir() {
   fi
 
   if [[ "$removed" == true ]]; then
-    printf "  ${RED}-${NC} %s  ${RED}[dir removed]${NC}\n" "$dir"
+    removed "$dir"
   else
-    printf "  ${YELLOW}-${NC} %s  ${YELLOW}[kept, not empty]${NC}\n" "$dir"
+    kept "$dir" "not empty"
   fi
 }
 
@@ -260,12 +296,12 @@ strip_rc_block() {
   display="$rc_file${label:+ (${label})}"
 
   if [[ ! -f "$rc_file" ]]; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[file not found]${NC}\n" "$display"
+    skipped "$rc_file" "${label:+${label}, }file not found"
     return 0
   fi
 
   if ! grep -qF "$sentinel_begin" "$rc_file"; then
-    printf "  ${GREEN}-${NC} %s  ${GREEN}[not installed]${NC}\n" "$display"
+    skipped "$rc_file" "${label:+${label}, }not installed"
     return 0
   fi
 
@@ -275,7 +311,7 @@ strip_rc_block() {
   fi
 
   portable_sed_inplace "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file"
-  printf "  ${RED}-${NC} %s  ${RED}[removed]${NC}\n" "$display"
+  removed "$display"
 }
 
 # Main entry point. Resolves paths for both user and system installs and

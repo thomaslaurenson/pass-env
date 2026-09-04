@@ -6,6 +6,7 @@
 
 - Refuse prompt, pager, git, pass and GnuPG variables, and internal names, from entries
 - Restore a variable shared by several entries only once every entry is unset
+- Print installer and uninstaller output as one tagged line per action
 
 ### Fixed
 
