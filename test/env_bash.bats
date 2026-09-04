@@ -213,6 +213,38 @@ teardown() {
   [[ -z "${MY_VAR:-}" ]]
 }
 
+# Entries that define no variables
+
+@test "set: emits the marker alone for an entry with no variables" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash "$ENV_BASH" set novars.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "# pass-env entry: novars.env" ]]
+}
+
+@test "set: eval of a variable-free entry does not dump the environment" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash -c "export SECRET_CANARY=canary123; eval \"\$(bash '$ENV_BASH' set novars.env)\""
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"canary123"* ]]
+}
+
+@test "unset: emits nothing for an entry with no variables" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/novars.env"
+  printf '# only a comment\n\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/novars.env.gpg"
+  run bash "$ENV_BASH" unset novars.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/novars.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ -z "$output" ]]
+}
+
 # run: subprocess injection and isolation
 
 @test "run: injects entry vars into the subprocess" {
@@ -545,6 +577,26 @@ teardown() {
   [[ "$output" =~ "sensitive variable" ]]
 }
 
+@test "set: refuses to set BASH_VERSION from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_bashver.env"
+  printf 'BASH_VERSION=5.2\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_bashver.env.gpg"
+  run bash "$ENV_BASH" set danger_bashver.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_bashver.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set ZSH_VERSION from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_zshver.env"
+  printf 'ZSH_VERSION=5.9\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_zshver.env.gpg"
+  run bash "$ENV_BASH" run danger_zshver.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_zshver.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
 @test "run: refuses to set GNUPGHOME from an entry" {
   local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_gnupg.env"
   printf 'GNUPGHOME=/tmp/evil-gnupg\n' > "$content_fixture"
@@ -553,6 +605,50 @@ teardown() {
   rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_gnupg.env.gpg"
   [ "$status" -ne 0 ]
   [[ "$output" =~ "sensitive variable" ]]
+}
+
+# Reserved variable namespace
+
+@test "run: an entry key of 'callback' does not rebind the parser dispatch" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_callback.env"
+  local marker="$BATS_TEST_TMPDIR/rebind_marker"
+  printf 'callback=eval\ntrue=;touch %s\nSAFE=safe\n' "$marker" > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_callback.env.gpg"
+  run bash "$ENV_BASH" run rebind_callback.env -- printenv SAFE
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_callback.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "safe" ]]
+  [ ! -e "$marker" ]
+}
+
+@test "run: an entry key of 'expand' does not disable placeholder substitution" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_expand.env"
+  printf 'expand=false\nMODEL=gpt\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_expand.env.gpg"
+  run bash "$ENV_BASH" run rebind_expand.env -- printf '%s\n' '{{MODEL}}'
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_expand.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "gpt" ]]
+}
+
+@test "run: rejects a reserved _pass_env_ variable name from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/reserved_run.env"
+  printf '_pass_env_callback=eval\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/reserved_run.env.gpg"
+  run bash "$ENV_BASH" run reserved_run.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/reserved_run.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "reserved variable name" ]]
+}
+
+@test "set: rejects a reserved _PASS_ENV_ variable name from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/reserved_set.env"
+  printf '_PASS_ENV_LOADED_NAMES=HOME\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/reserved_set.env.gpg"
+  run bash "$ENV_BASH" set reserved_set.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/reserved_set.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "reserved variable name" ]]
 }
 
 # Command after -- : leading VAR=value assignment prefix

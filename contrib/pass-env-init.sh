@@ -22,17 +22,39 @@ if [[ -z "${ZSH_VERSION:-}" && "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
   return 1
 fi
 
+# Which shell this file was sourced into, decided once here and consulted by
+# every function that needs the bash or zsh form of an expansion.
+#
+# Deciding once, rather than re-reading BASH_VERSION at each site, keeps the
+# choice out of reach of anything loaded afterwards. A variable named
+# BASH_VERSION or ZSH_VERSION arriving from an entry would otherwise select the
+# wrong dialect; the expansion then fails, the failure reads as "the variable is
+# not set", and passenv unset records an unset where it should have recorded the
+# user's real pre-load value. The extension refuses both names, but the loader
+# and the extension install as separate files and can version-skew, and
+# _PASSENV_ is the one namespace the load loop will not eval.
+if [[ -n "${BASH_VERSION:-}" ]]; then
+  _PASSENV_SHELL=bash
+else
+  _PASSENV_SHELL=zsh
+fi
+
 # Initialise the tracking associative arrays exactly once per session.
 # The guard prevents re-initialisation if the file is sourced more than once.
 #   _PASSENV_TRACKER  entry -> space-separated variable names loaded from it
-#   _PASSENV_RESTORE  entry -> newline-separated shell statements that restore
-#                     each variable to its pre-load state (export of the old
-#                     value, or unset when it did not previously exist)
+#   _PASSENV_ORIGIN   variable name -> the shell statement that restores it to
+#                     the state it had before any entry loaded it (export of
+#                     the old value, or unset when it did not previously exist)
+#
+# _PASSENV_ORIGIN is keyed by variable, not by entry. Keying by entry records
+# whatever the previous entry left behind, so with two entries defining the
+# same variable, unsetting both would re-export the first entry's value into a
+# shell the user had just cleared.
 if [[ -z "${_PASSENV_TRACKER+x}" ]]; then
   declare -gA _PASSENV_TRACKER
 fi
-if [[ -z "${_PASSENV_RESTORE+x}" ]]; then
-  declare -gA _PASSENV_RESTORE
+if [[ -z "${_PASSENV_ORIGIN+x}" ]]; then
+  declare -gA _PASSENV_ORIGIN
 fi
 
 # Print each key of _PASSENV_TRACKER, one per line.
@@ -40,18 +62,17 @@ fi
 # Abstracts the bash/zsh difference in associative-array key iteration:
 # bash uses ${!arr[@]}; zsh uses ${(@k)arr}. Uses eval to parse the zsh
 # syntax without the bash parser ever seeing it.
-# Branches on BASH_VERSION (set by bash itself, not spoofable by end users)
-# rather than ZSH_VERSION (a plain env var that could be set in bash).
+# Branches on _PASSENV_SHELL, decided once when this file was sourced.
 #
 # Environment:
 #   _PASSENV_TRACKER - associative array of loaded entries
-#   BASH_VERSION     - set by bash; selects the bash iteration syntax
+#   _PASSENV_SHELL   - "bash" or "zsh"; selects the iteration syntax
 # Outputs:
 #   stdout: entry key names, one per line
 # Returns:
 #   0 always
 _passenv_keys() {
-  if [[ -n "${BASH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == bash ]]; then
     printf '%s\n' "${!_PASSENV_TRACKER[@]}"
   else
     # zsh: use parameter expansion flag (@k) for associative array keys
@@ -75,7 +96,7 @@ _passenv_keys() {
 # Returns:
 #   0 always
 _passenv_split_words() {
-  if [[ -n "${ZSH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == zsh ]]; then
     # In zsh, unquoted $1 does not word-split by default; ${=1} enables it.
     # Safety contract: callers must only pass variable names validated against
     # ^[A-Za-z_][A-Za-z0-9_]*$; that character class excludes all IFS chars,
@@ -90,6 +111,30 @@ _passenv_split_words() {
   fi
 }
 
+# Report whether any currently loaded entry provides a variable name.
+#
+# Consulted when unsetting an entry: a variable that another loaded entry also
+# defines must be left exactly as it is, because that entry's value is the live
+# one and the snapshot held for the variable predates it. The remaining entry
+# restores it when it is itself unset.
+#
+# Arguments:
+#   $1 - Variable name (already validated as a shell identifier)
+# Environment:
+#   _PASSENV_TRACKER - read
+# Returns:
+#   0 if some loaded entry lists the name, 1 otherwise
+_passenv_var_is_claimed() {
+  local _passenv_name="$1" _passenv_k
+  while IFS= read -r _passenv_k; do
+    [[ -n "${_passenv_k}" ]] || continue
+    case " ${_PASSENV_TRACKER[$_passenv_k]:-} " in
+      *" ${_passenv_name} "*) return 0 ;;
+    esac
+  done < <(_passenv_keys)
+  return 1
+}
+
 # Report whether a variable name is currently set in this shell.
 #
 # Cross-shell indirection: bash uses ${!name+x}; zsh uses ${(P)name+x}
@@ -100,7 +145,7 @@ _passenv_split_words() {
 # Returns:
 #   0 if the variable is set (possibly empty), 1 otherwise
 _passenv_var_is_set() {
-  if [[ -n "${BASH_VERSION:-}" ]]; then
+  if [[ "${_PASSENV_SHELL}" == bash ]]; then
     [[ -n "${!1+x}" ]]
   else
     # shellcheck disable=SC2296
@@ -124,7 +169,7 @@ _passenv_var_is_set() {
 _passenv_snapshot_stmt() {
   local name="$1" val
   if _passenv_var_is_set "${name}"; then
-    if [[ -n "${BASH_VERSION:-}" ]]; then
+    if [[ "${_PASSENV_SHELL}" == bash ]]; then
       val="${!name}"
     else
       # shellcheck disable=SC2296
@@ -249,7 +294,7 @@ _passenv_set() {
 #     (defense-in-depth; value-level injection protection comes from printf %q
 #     in the extension - both layers are required) and eval'd individually.
 # Before a variable is first assigned for an entry, its pre-load state is
-# snapshotted into _PASSENV_RESTORE so 'passenv unset' can restore it.
+# snapshotted into _PASSENV_ORIGIN so 'passenv unset' can restore it.
 # All other lines are ignored.
 #
 # Arguments:
@@ -257,7 +302,7 @@ _passenv_set() {
 #        extension when omitted)
 #   $2 - Force flag ("true" to reload an already-loaded entry)
 # Environment:
-#   _PASSENV_TRACKER, _PASSENV_RESTORE - updated
+#   _PASSENV_TRACKER, _PASSENV_ORIGIN - updated
 # Outputs:
 #   stdout: 'passenv: loaded ENTRY -> VAR1 VAR2 ...' per loaded entry
 #   stderr: error messages on failure
@@ -265,109 +310,135 @@ _passenv_set() {
 #   0 on success
 #   1 if the pass command fails, returns no output, or emits no valid exports
 _passenv_load_one() {
-  local entry="${1:-}"
-  local force="${2:-false}"
+  local _passenv_entry="${1:-}"
+  local _passenv_force="${2:-false}"
 
-  if [[ -n "${entry}" && "${force}" != true && -n "${_PASSENV_TRACKER[$entry]+x}" ]]; then
-    printf 'passenv: %s is already loaded (use --force to reload)\n' "${entry}"
+  if [[ -n "${_passenv_entry}" && "${_passenv_force}" != true \
+        && -n "${_PASSENV_TRACKER[$_passenv_entry]+x}" ]]; then
+    printf 'passenv: %s is already loaded (use --force to reload)\n' "${_passenv_entry}"
     return 0
   fi
 
   # Capture stdout; keep stderr visible so fzf UI is not swallowed.
   # Build args explicitly to avoid word-splitting on unquoted conditional expansion.
-  local pass_args=()
-  [[ -n "${entry}" ]] && pass_args=("${entry}")
-  local output
-  if ! output="$(pass env set "${pass_args[@]}")" ; then
-    printf 'passenv: pass env set failed for: %s\n' "${entry:-<interactive>}" >&2
+  local _passenv_pass_args=()
+  [[ -n "${_passenv_entry}" ]] && _passenv_pass_args=("${_passenv_entry}")
+  local _passenv_output
+  if ! _passenv_output="$(pass env set "${_passenv_pass_args[@]}")" ; then
+    printf 'passenv: pass env set failed for: %s\n' "${_passenv_entry:-<interactive>}" >&2
     return 1
   fi
 
-  if [[ -z "${output}" ]]; then
+  if [[ -z "${_passenv_output}" ]]; then
     printf 'passenv: pass env set returned no output\n' >&2
     return 1
   fi
 
-  # Process the output section by section. 'current' is the entry the
+  # Process the output section by section. '_passenv_current' is the entry the
   # following export lines belong to; it defaults to the requested entry so
   # marker-less output (e.g. an older extension version) still tracks
   # correctly for explicit loads.
-  local current="${entry}"
-  local skip_section=false
-  local line rest key val
-  local any_loaded=false
-  local section_entries=""   # newline-separated, in load order
-  while IFS= read -r line; do
-    case "${line}" in
+  #
+  # Every local here carries the _passenv_ prefix because the eval below runs
+  # in this scope: an entry defining 'current' would otherwise rebind the
+  # tracker key mid-loop, and 'force' or 'skip_section' would steer the loop.
+  local _passenv_current="${_passenv_entry}"
+  local _passenv_skip_section=false
+  local _passenv_line _passenv_rest _passenv_key
+  local _passenv_any_loaded=false
+  local _passenv_section_entries=""   # newline-separated, in load order
+  while IFS= read -r _passenv_line; do
+    case "${_passenv_line}" in
       "# pass-env entry: "*)
-        current="${line#\# pass-env entry: }"
-        skip_section=false
-        if [[ "${force}" != true && -n "${_PASSENV_TRACKER[$current]+x}" ]]; then
+        _passenv_current="${_passenv_line#\# pass-env entry: }"
+        # The extension validates entry names, but the loader and the extension
+        # install as separate files and can version-skew, so re-check before the
+        # name becomes an array subscript: bash expands a command substitution
+        # inside one, including in 'unset arr[key]'.
+        if ! [[ "${_passenv_current}" =~ ^[A-Za-z0-9._/@+-]+$ ]]; then
+          printf 'passenv: refusing unsafe entry name from pass env set output\n' >&2
+          return 1
+        fi
+        _passenv_skip_section=false
+        if [[ "${_passenv_force}" != true \
+              && -n "${_PASSENV_TRACKER[$_passenv_current]+x}" ]]; then
           # Interactive multi-select can include an already-loaded entry.
-          printf 'passenv: %s is already loaded (use --force to reload)\n' "${current}"
-          skip_section=true
+          printf 'passenv: %s is already loaded (use --force to reload)\n' "${_passenv_current}"
+          _passenv_skip_section=true
         fi
         continue
         ;;
       "export "*)
-        [[ "${skip_section}" == true ]] && continue
-        rest="${line#export }"
-        key="${rest%%=*}"
+        [[ "${_passenv_skip_section}" == true ]] && continue
+        _passenv_rest="${_passenv_line#export }"
+        _passenv_key="${_passenv_rest%%=*}"
         # Strict identifier guard: drop anything that is not export KEY=...
         # NOTE: this validates the key name only; it does NOT constrain values.
         # Protection against value-level injection comes entirely from
         # printf %q in the extension. Both layers are required.
-        [[ "${rest}" == *=* ]] || continue
-        [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ "${_passenv_rest}" == *=* ]] || continue
+        [[ "${_passenv_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        # Reserved namespace, checked here as well as in the extension so the
+        # two halves stay safe independently when their versions differ.
+        case "${_passenv_key}" in
+          _passenv_*|_PASSENV_*) continue ;;
+        esac
 
-        if [[ -z "${current}" ]]; then
+        if [[ -z "${_passenv_current}" ]]; then
           # No entry name and no marker (should not happen with a current
           # extension); fall back to a stable synthetic key.
-          current="__passenv_interactive"
+          _passenv_current="__passenv_interactive"
         fi
 
         # Snapshot the pre-load state the first time this var is recorded
         # for this entry, so unset can restore it. Re-loads with --force keep
         # the original (true pre-load) snapshot.
-        case " ${_PASSENV_TRACKER[$current]:-} " in
-          *" ${key} "*) : ;;  # already tracked; keep existing snapshot
+        case " ${_PASSENV_TRACKER[$_passenv_current]:-} " in
+          *" ${_passenv_key} "*) : ;;  # already tracked; keep existing snapshot
           *)
-            _PASSENV_RESTORE[$current]="${_PASSENV_RESTORE[$current]:-}${_PASSENV_RESTORE[$current]:+
-}$(_passenv_snapshot_stmt "${key}")"
-            _PASSENV_TRACKER[$current]="${_PASSENV_TRACKER[$current]:-}${_PASSENV_TRACKER[$current]:+ }${key}"
+            # The first entry to claim a variable owns its pre-load state. A
+            # later entry defining the same name must not overwrite the
+            # snapshot, or unsetting that entry would restore this entry's
+            # value rather than what the shell held originally.
+            if [[ -z "${_PASSENV_ORIGIN[$_passenv_key]+x}" ]]; then
+              _PASSENV_ORIGIN[$_passenv_key]="$(_passenv_snapshot_stmt "${_passenv_key}")"
+            fi
+            _PASSENV_TRACKER[$_passenv_current]="${_PASSENV_TRACKER[$_passenv_current]:-}"
+            _PASSENV_TRACKER[$_passenv_current]+="${_PASSENV_TRACKER[$_passenv_current]:+ }${_passenv_key}"
             ;;
         esac
 
-        eval "${line}"
-        any_loaded=true
+        eval "${_passenv_line}"
+        _passenv_any_loaded=true
         case "
-${section_entries}
+${_passenv_section_entries}
 " in
           *"
-${current}
+${_passenv_current}
 "*) : ;;
-          *) section_entries="${section_entries}${section_entries:+
-}${current}" ;;
+          *) _passenv_section_entries="${_passenv_section_entries}${_passenv_section_entries:+
+}${_passenv_current}" ;;
         esac
         ;;
       *) : ;;  # ignore stray lines (blank lines, debug output, etc.)
     esac
-  done <<< "${output}"
+  done <<< "${_passenv_output}"
 
-  if [[ "${any_loaded}" != true ]]; then
+  if [[ "${_passenv_any_loaded}" != true ]]; then
     # Nothing was eval'd. If sections were skipped as already loaded that is
     # a success; otherwise the output contained no valid export lines.
-    if [[ "${skip_section}" == true ]]; then
+    if [[ "${_passenv_skip_section}" == true ]]; then
       return 0
     fi
     printf 'passenv: no valid export lines found in output\n' >&2
     return 1
   fi
 
-  while IFS= read -r current; do
-    [[ -n "${current}" ]] || continue
-    printf 'passenv: loaded %s -> %s\n' "${current}" "${_PASSENV_TRACKER[$current]}"
-  done <<< "${section_entries}"
+  while IFS= read -r _passenv_current; do
+    [[ -n "${_passenv_current}" ]] || continue
+    printf 'passenv: loaded %s -> %s\n' \
+      "${_passenv_current}" "${_PASSENV_TRACKER[$_passenv_current]}"
+  done <<< "${_passenv_section_entries}"
 }
 
 # Restore variables for one or more loaded entries and remove them from the
@@ -380,14 +451,21 @@ ${current}
 # Errors for individual unknown entries are printed to stderr but do not abort
 # the loop.
 #
-# Known limitation: if two loaded entries define the same variable, unsetting
-# one restores that variable to its state before *that entry* was loaded,
-# which may differ from what the other entry expects.
+# When two loaded entries define the same variable, unsetting one leaves that
+# variable alone, because the other entry still provides it; whichever entry is
+# unset last restores the value the shell held before either was loaded.
+#
+# Known limitation: the value left standing is whichever entry wrote last, not
+# whichever entry still owns it. Unsetting the entry that happened to win leaves
+# its value live until the remaining entry is also unset. Handing the variable
+# back to the remaining entry would mean recording every entry's values and
+# their load order, rather than one pre-load snapshot per variable.
 #
 # Arguments:
 #   $@ - Entry keys to unset (optional; launches fzf picker if omitted)
 # Environment:
-#   _PASSENV_TRACKER, _PASSENV_RESTORE - matched entries are removed
+#   _PASSENV_TRACKER - matched entries are removed
+#   _PASSENV_ORIGIN  - snapshots are removed as their variables are restored
 # Outputs:
 #   stdout: 'passenv: unset ENTRY -> VAR1 VAR2 ...' for each unset entry
 #   stderr: warning if a named entry is not currently loaded
@@ -412,37 +490,31 @@ _passenv_unset() {
     local tmp_preview
     tmp_preview="$(mktemp)" || { printf 'passenv: failed to create temp file\n' >&2; return 1; }
 
-    # Save existing trap state before overwriting. passenv is a shell function,
-    # so trap modifies the interactive shell's global trap table directly. Without
-    # saving/restoring, any EXIT/INT/TERM traps the user set would be destroyed.
-    local prev_int prev_term prev_exit
-    prev_int="$(trap -p INT)"
-    prev_term="$(trap -p TERM)"
-    prev_exit="$(trap -p EXIT)"
-
-    trap 'rm -f "${tmp_preview}"' INT TERM EXIT
-    _passenv_keys | while IFS= read -r k; do
-      printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
-    done > "${tmp_preview}"
-
+    # The picker runs inside a command substitution, so the cleanup trap below
+    # belongs to that subshell. Setting a trap in the function body instead
+    # would write to the interactive shell's own trap table: passenv is a shell
+    # function, not a subprocess. Saving and restoring around it is not an
+    # option either, because zsh's `trap -p` prints nothing, so the saved value
+    # is empty and the user's INT, TERM and EXIT handlers are destroyed rather
+    # than put back.
     local selected
-    selected="$(awk -F'\t' '{print $1}' "${tmp_preview}" \
-      | fzf --multi \
-            --height=40% \
-            --layout=reverse \
-            --border \
-            --prompt="Unset entry: " \
-            --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
-            --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "${tmp_preview}")")"
+    selected="$(
+      trap 'rm -f "${tmp_preview}"' EXIT INT TERM
+      _passenv_keys | while IFS= read -r k; do
+        printf '%s\t%s\n' "$k" "${_PASSENV_TRACKER[$k]}"
+      done > "${tmp_preview}"
+      awk -F'\t' '{print $1}' "${tmp_preview}" \
+        | fzf --multi \
+              --height=40% \
+              --layout=reverse \
+              --border \
+              --prompt="Unset entry: " \
+              --header="ENTER: select  |  TAB+ENTER: select multiple  |  ESC: cancel" \
+              --preview="awk -F'\t' -v k={} '\$1==k {print \"Vars: \" \$2}' $(printf '%q' "${tmp_preview}")"
+    )"
+    # Belt and braces: the subshell trap already removed this on every exit
+    # path, including a Ctrl-C during fzf.
     rm -f "${tmp_preview}"
-
-    # Restore previous traps. trap -p output is eval-safe: the shell itself
-    # generates it with proper quoting. The :-: default is a no-op command,
-    # used when no trap was previously set (trap -p returns empty string).
-    trap - INT TERM EXIT
-    eval "${prev_int:-:}"
-    eval "${prev_term:-:}"
-    eval "${prev_exit:-:}"
 
     [[ -z "${selected}" ]] && { printf 'passenv: no entry selected\n'; return 0; }
     while IFS= read -r e; do
@@ -461,23 +533,28 @@ _passenv_unset() {
 
     varlist="${_PASSENV_TRACKER[$entry]}"
 
-    if [[ -n "${_PASSENV_RESTORE[$entry]:-}" ]]; then
-      # Restore each variable to its pre-load state. Statements were built
-      # by _passenv_snapshot_stmt at load time (export NAME=%q / unset NAME)
-      # and are eval-safe.
-      eval "${_PASSENV_RESTORE[$entry]}"
-    else
-      # Fallback for tracker data without restore info: plain unset.
-      while IFS= read -r v; do
-        [[ -n "${v}" ]] && unset "${v}"
-      done < <(_passenv_split_words "${varlist}")
-    fi
-
     # Safe: `unset "arr[$key]"` evaluates its subscript, but entry names are
-    # validated against a restricted character set in the extension before they
-    # can enter the tracker, so this subscript holds no shell metacharacters.
+    # validated against a restricted character set in the extension, and again
+    # by the loader, before they can enter the tracker.
+    #
+    # Dropped before the loop below so _passenv_var_is_claimed sees only the
+    # entries that remain loaded, rather than counting this one as an owner.
     unset "_PASSENV_TRACKER[${entry}]"
-    unset "_PASSENV_RESTORE[${entry}]"
+
+    while IFS= read -r v; do
+      [[ -n "${v}" ]] || continue
+      # Another loaded entry still provides this variable; its value is the
+      # live one, so leave it and let that entry restore it later.
+      _passenv_var_is_claimed "${v}" && continue
+      # Statements were built by _passenv_snapshot_stmt at load time
+      # (export NAME=%q / unset NAME) and are eval-safe.
+      if [[ -n "${_PASSENV_ORIGIN[$v]:-}" ]]; then
+        eval "${_PASSENV_ORIGIN[$v]}"
+      else
+        unset "${v}"
+      fi
+      unset "_PASSENV_ORIGIN[${v}]"
+    done < <(_passenv_split_words "${varlist}")
 
     printf 'passenv: unset %s -> %s\n' "${entry}" "${varlist}"
     any_unset=true

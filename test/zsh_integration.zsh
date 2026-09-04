@@ -76,4 +76,44 @@ if [[ -n "${MY_OTHER+x}" ]]; then
   exit 1
 fi
 
+# Test 6: entry content cannot rebind the loader local holding the tracker key.
+content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_current.env"
+printf 'current=hijacked.env\nREAL_VAR=realvalue\n' > "$content_fixture"
+touch "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+passenv set "rebind_current.env" >/dev/null
+rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+if [[ -z "${_PASSENV_TRACKER[rebind_current.env]:-}" ]]; then
+  printf 'FAIL: rebind_current.env not tracked under its real name\n' >&2
+  exit 1
+fi
+if [[ -n "${_PASSENV_TRACKER[hijacked.env]:-}" ]]; then
+  printf 'FAIL: entry content rebound the tracker key to hijacked.env\n' >&2
+  exit 1
+fi
+passenv unset "rebind_current.env" >/dev/null
+
+# Test 7: a stray BASH_VERSION does not flip the loader's dialect detection.
+export PRESET_VAR=presetvalue
+BASH_VERSION='5.2'
+stmt="$(_passenv_snapshot_stmt PRESET_VAR)"
+unset BASH_VERSION
+if [[ "$stmt" != 'export PRESET_VAR=presetvalue' ]]; then
+  printf 'FAIL: snapshot wrong with BASH_VERSION set under zsh (got: %s)\n' "$stmt" >&2
+  exit 1
+fi
+unset PRESET_VAR
+
+# Test 8: the interactive unset picker does not destroy the shell's traps.
+# zsh's `trap -p` prints nothing, so a save-and-restore around the picker would
+# silently discard whatever the user had set.
+ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$tmpbin/fzf"
+passenv set "myentry.env" >/dev/null
+trap 'printf "user trap\n"' INT
+MOCK_FZF_OUTPUT="myentry.env" passenv unset >/dev/null
+if ! trap | grep -q 'user trap'; then
+  printf 'FAIL: the unset picker destroyed the INT trap under zsh\n' >&2
+  exit 1
+fi
+trap - INT
+
 printf 'ok\n'

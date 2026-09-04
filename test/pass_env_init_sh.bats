@@ -226,3 +226,160 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == '{{MY_VAR}}' ]]
 }
+
+# Reserved namespace and marker validation
+
+# Replace the mock pass with one emitting pre-canned 'pass env set' output.
+#
+# The current extension refuses to emit the lines these tests need, so the
+# skew cases cannot be driven through it. The loader and the extension install
+# as separate files and can be upgraded independently, which is the state
+# being reproduced here.
+#
+# Arguments:
+#   $1 - Exact stdout the fake 'pass env set' should produce
+# Globals:
+#   BATS_TEST_TMPDIR - provided by bats; holds the fake binary and its payload
+_passenv_fake_pass_output() {
+  printf '%s\n' "$1" > "$BATS_TEST_TMPDIR/fake_output"
+  # setup() left a symlink here pointing at test/helpers/mock_pass. Remove it
+  # first: redirecting onto a symlink writes through it and would overwrite the
+  # tracked helper in the repository.
+  rm -f "$BATS_TEST_TMPDIR/bin/pass"
+  cat > "$BATS_TEST_TMPDIR/bin/pass" <<EOF
+#!/usr/bin/env bash
+[[ "\$1" == "env" ]] || exit 1
+cat "$BATS_TEST_TMPDIR/fake_output"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/pass"
+}
+
+@test "set: an entry key of 'current' does not move the tracker key" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_current.env"
+  printf 'current=hijacked.env\nREAL_VAR=realvalue\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+  passenv set "rebind_current.env"
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_current.env.gpg"
+  [[ -n "${_PASSENV_TRACKER[rebind_current.env]:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[hijacked.env]:-}" ]]
+  [[ "$REAL_VAR" == "realvalue" ]]
+}
+
+@test "set: drops a reserved _passenv_ key from skewed extension output" {
+  _passenv_fake_pass_output "# pass-env entry: skew.env
+export _passenv_current=hijacked.env
+export SKEW_VAR=skewvalue"
+  passenv set "skew.env"
+  [[ "$SKEW_VAR" == "skewvalue" ]]
+  [[ -n "${_PASSENV_TRACKER[skew.env]:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[hijacked.env]:-}" ]]
+}
+
+@test "set: refuses an unsafe entry name in skewed extension output" {
+  _passenv_fake_pass_output "# pass-env entry: evil\$(touch ${BATS_TEST_TMPDIR}/PWNED).env
+export SKEW_VAR=skewvalue"
+  run passenv set "skew.env"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "refusing unsafe entry name" ]]
+  [[ ! -e "$BATS_TEST_TMPDIR/PWNED" ]]
+}
+
+# Shell detection
+
+@test "snapshot: restores the real value when BASH_VERSION is cleared" {
+  export PRESET_VAR=presetvalue
+  local saved="$BASH_VERSION"
+  BASH_VERSION=""
+  run _passenv_snapshot_stmt PRESET_VAR
+  BASH_VERSION="$saved"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "export PRESET_VAR=presetvalue" ]]
+}
+
+@test "snapshot: still records an unset for a variable that is genuinely absent" {
+  unset ABSENT_VAR 2>/dev/null || true
+  run _passenv_snapshot_stmt ABSENT_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "unset ABSENT_VAR" ]]
+}
+
+# Shared variables across entries
+
+@test "unset: a variable another entry still provides is left alone" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  unset SHARED_VAR 2>/dev/null || true
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_a.env"
+  local after_first="${SHARED_VAR:-<unset>}"
+  passenv unset "shared_b.env"
+  local after_second="${SHARED_VAR+set}"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$after_first" == "from_b" ]]
+  [[ -z "$after_second" ]]
+}
+
+@test "unset: a shared variable does not resurrect after every entry is unset" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  export SHARED_VAR=original
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_a.env"
+  passenv unset "shared_b.env"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$SHARED_VAR" == "original" ]]
+}
+
+@test "unset: the original value is restored whichever order entries are unset" {
+  local shared="$PASSENV_FIXTURE_CONTENT_DIR/shared_a.env"
+  local shared_b="$PASSENV_FIXTURE_CONTENT_DIR/shared_b.env"
+  printf 'SHARED_VAR=from_a\n' > "$shared"
+  printf 'SHARED_VAR=from_b\n' > "$shared_b"
+  touch "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  export SHARED_VAR=original
+  passenv set "shared_a.env" "shared_b.env"
+  passenv unset "shared_b.env"
+  passenv unset "shared_a.env"
+  rm -f "$shared" "$shared_b" \
+    "$PASSWORD_STORE_DIR/shared_a.env.gpg" "$PASSWORD_STORE_DIR/shared_b.env.gpg"
+  [[ "$SHARED_VAR" == "original" ]]
+}
+
+# Interactive unset picker: trap and temp file handling
+
+@test "unset: the picker leaves the shell's own INT trap intact" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  trap 'printf "user trap\n"' INT
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  local after
+  after="$(trap -p INT)"
+  trap - INT
+  [[ "$after" =~ "user trap" ]]
+}
+
+@test "unset: the picker leaves no preview file behind" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  local before after
+  before="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  after="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'tmp.*' 2>/dev/null | wc -l)"
+  [[ "$after" -le "$before" ]]
+}
+
+@test "unset: the picker's selection is applied" {
+  ln -sf "$REPO_ROOT/test/helpers/mock_fzf" "$BATS_TEST_TMPDIR/bin/fzf"
+  passenv set "myentry.env"
+  MOCK_FZF_OUTPUT="myentry.env" passenv unset
+  [[ -z "${MY_VAR:-}" ]]
+  [[ -z "${_PASSENV_TRACKER[myentry.env]:-}" ]]
+}
