@@ -383,3 +383,39 @@ export SKEW_VAR=skewvalue"
   [[ -z "${MY_VAR:-}" ]]
   [[ -z "${_PASSENV_TRACKER[myentry.env]:-}" ]]
 }
+
+# Entry content cannot reach the loader's callers
+
+@test "set: an entry key of 'e' does not break the rollback of that entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_e.env"
+  printf 'e=hijacked.env\nREAL_VAR=realvalue\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_e.env.gpg"
+  unset REAL_VAR 2>/dev/null || true
+  passenv set "rebind_e.env" "nonexistent.env" 2>/dev/null || true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_e.env.gpg"
+  [[ -z "${REAL_VAR+x}" ]]
+  [[ -z "${_PASSENV_TRACKER[rebind_e.env]:-}" ]]
+}
+
+@test "unset: an entry key of 'any_unset' does not fail the unset" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/rebind_any.env"
+  printf 'any_unset=false\nREAL_VAR=realvalue\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/rebind_any.env.gpg"
+  passenv set "rebind_any.env"
+  run passenv unset "rebind_any.env"
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/rebind_any.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "unset rebind_any.env" ]]
+}
+
+# Caller's umask
+
+@test "run: passes the shell's umask to the command" {
+  local saved
+  saved="$(umask)"
+  umask 027
+  run passenv run "myentry.env" -- sh -c umask
+  umask "$saved"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "0027" ]]
+}

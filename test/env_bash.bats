@@ -774,3 +774,88 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == '{{MY_VAR}}' ]]
 }
+
+# Denylist: same-tier names added after the review
+
+@test "run: refuses to set GIT_EXEC_PATH from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_gitexec.env"
+  printf 'GIT_EXEC_PATH=/tmp/evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_gitexec.env.gpg"
+  run bash "$ENV_BASH" run danger_gitexec.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_gitexec.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "run: refuses to set SSH_ASKPASS from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_askpass.env"
+  printf 'SSH_ASKPASS=/tmp/evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_askpass.env.gpg"
+  run bash "$ENV_BASH" run danger_askpass.env -- true
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_askpass.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "set: refuses to set XDG_CONFIG_HOME from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_xdg.env"
+  printf 'XDG_CONFIG_HOME=/tmp/evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_xdg.env.gpg"
+  run bash "$ENV_BASH" set danger_xdg.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_xdg.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+@test "set: refuses to set VIMINIT from an entry" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/danger_viminit.env"
+  printf 'VIMINIT=:!evil\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/danger_viminit.env.gpg"
+  run bash "$ENV_BASH" set danger_viminit.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/danger_viminit.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "sensitive variable" ]]
+}
+
+# Error messages name the line, never the text before '='
+
+@test "set: invalid variable name error reports the line number, not the text" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/url_line.env"
+  printf 'GOOD=1\nhttps://user:s3cret@host/?a=b\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/url_line.env.gpg"
+  run bash "$ENV_BASH" set url_line.env
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/url_line.env.gpg"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "invalid variable name in url_line.env (line 2)" ]]
+  ! [[ "$output" =~ "s3cret" ]]
+}
+
+@test "set: unsupported line format error reports the line number" {
+  run bash "$ENV_BASH" set badformat.env
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "(line 2, expected KEY=VALUE)" ]]
+}
+
+# Caller's umask
+
+@test "run: applies PASSENV_UMASK to the command" {
+  run env PASSENV_UMASK=027 bash "$ENV_BASH" run myentry.env -- sh -c umask
+  [ "$status" -eq 0 ]
+  [[ "$output" == "0027" ]]
+}
+
+@test "run: ignores a PASSENV_UMASK that is not an octal mask" {
+  run env PASSENV_UMASK='$(touch /tmp/pwned)' bash "$ENV_BASH" run myentry.env -- printenv MY_VAR
+  [ "$status" -eq 0 ]
+  [[ "$output" == "myvalue" ]]
+}
+
+@test "run: an entry cannot supply PASSENV_UMASK" {
+  local content_fixture="$PASSENV_FIXTURE_CONTENT_DIR/entry_umask.env"
+  printf 'PASSENV_UMASK=000\n' > "$content_fixture"
+  touch "$PASSWORD_STORE_DIR/entry_umask.env.gpg"
+  run env PASSENV_UMASK=027 bash "$ENV_BASH" run entry_umask.env -- sh -c umask
+  rm -f "$content_fixture" "$PASSWORD_STORE_DIR/entry_umask.env.gpg"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "0027" ]]
+}
