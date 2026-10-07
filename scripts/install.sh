@@ -11,6 +11,11 @@ VERSION="v0.0.0"
 readonly REPO="thomaslaurenson/pass-env"
 readonly BASE_URL="https://github.com/${REPO}/releases"
 
+# Every download goes through one of these. Both pin the transport to https,
+# redirects included, so a release asset can never be fetched in the clear.
+readonly CURL_OPTS=(-fsSL --proto '=https' --proto-redir '=https' --max-time 30)
+readonly WGET_OPTS=(--https-only --timeout=30 -q)
+
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -87,6 +92,34 @@ check_pass_installed() {
     error "pass is not installed or not in PATH. Install pass before running this script."
 }
 
+# Print the home directory of a local user account.
+#
+# Consults the account database rather than expanding ~user through eval,
+# which would hand the username to the shell as code. The name is checked
+# against the portable username character set first for the same reason.
+#
+# Arguments:
+#   $1 - Username
+# Outputs:
+#   stdout: absolute home directory path, or nothing when it cannot be found
+# Returns:
+#   0 when a home directory was printed
+#   1 otherwise
+user_home() {
+  local user="$1" home=""
+  [[ "${user}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  if command -v getent &>/dev/null; then
+    home="$(getent passwd "${user}" 2>/dev/null | cut -d: -f6)"
+  elif command -v dscl &>/dev/null; then
+    home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null \
+      | awk '{print $2}')"
+  else
+    home="$(awk -F: -v u="${user}" '$1 == u {print $6}' /etc/passwd 2>/dev/null)"
+  fi
+  [[ -n "${home}" ]] || return 1
+  printf '%s' "${home}"
+}
+
 # User-settable options; populated by parse_args()
 INSTALL_TYPE="system"  # user | system
 NO_COMPLETION=false
@@ -160,13 +193,16 @@ EXAMPLES:
 
 SECURITY:
   When this script is piped directly from curl, it runs without giving you a
-  chance to verify its contents first. For security-conscious installs:
+  chance to verify its contents first. To inspect it, download it into an
+  empty directory under the name checksums.txt lists it by:
 
-    curl -fsSL .../install.sh -o /tmp/pass-env-install.sh
-    curl -fsSL .../checksums.txt -o /tmp/pass-env-checksums.txt
-    sha256sum --check --ignore-missing /tmp/pass-env-checksums.txt
-    less /tmp/pass-env-install.sh
-    bash /tmp/pass-env-install.sh
+    cd "\$(mktemp -d)"
+    curl -fsSL --proto '=https' -O .../install.sh -O .../checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+    less install.sh
+    bash install.sh
+
+  On macOS, use: shasum -a 256 --check --ignore-missing checksums.txt
 EOF
 }
 
@@ -486,11 +522,11 @@ resolve_version() {
     info "Fetching latest release version..."
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
     if command -v curl &>/dev/null; then
-      VERSION="$(curl -fsSL --max-time 30 "${api_url}" \
+      VERSION="$(curl "${CURL_OPTS[@]}" "${api_url}" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     elif command -v wget &>/dev/null; then
-      VERSION="$(wget --timeout=30 -qO- "${api_url}" \
+      VERSION="$(wget "${WGET_OPTS[@]}" -O- "${api_url}" \
         | grep '"tag_name"' \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     else
@@ -522,9 +558,9 @@ download_tarball() {
   step "${url}"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL --max-time 30 "${url}" -o "${dest}" || error "Download failed: ${url}"
+    curl "${CURL_OPTS[@]}" "${url}" -o "${dest}" || error "Download failed: ${url}"
   elif command -v wget &>/dev/null; then
-    wget --timeout=30 -qO "${dest}" "${url}" || error "Download failed: ${url}"
+    wget "${WGET_OPTS[@]}" -O "${dest}" "${url}" || error "Download failed: ${url}"
   else
     error "curl or wget is required"
   fi
@@ -576,10 +612,10 @@ verify_checksum() {
   local checksums_file="${tarball%/*}/checksums.txt"
 
   if command -v curl &>/dev/null; then
-    curl -fsSL --max-time 30 "${checksums_url}" -o "${checksums_file}" \
+    curl "${CURL_OPTS[@]}" "${checksums_url}" -o "${checksums_file}" \
       || error "Failed to download checksums.txt: ${checksums_url}"
   elif command -v wget &>/dev/null; then
-    wget --timeout=30 -qO "${checksums_file}" "${checksums_url}" \
+    wget "${WGET_OPTS[@]}" -O "${checksums_file}" "${checksums_url}" \
       || error "Failed to download checksums.txt: ${checksums_url}"
   else
     error "curl or wget is required"
@@ -803,13 +839,18 @@ show_summary() {
 main() {
   parse_args "$@"
 
+  # A user install writes into the invoking user's home, including the
+  # password store itself. Run as root it would leave every one of those
+  # paths root-owned, so refuse rather than warn.
+  if [[ "${EUID:-$(id -u)}" -eq 0 && "${INSTALL_TYPE}" == "user" ]]; then
+    error "A user install must not run as root. Re-run without sudo: bash install.sh $*"
+  fi
+
   # When run under sudo, HOME is typically /root (due to env_reset/always_set_home).
   # Resolve the invoking user's home so shell integration targets the right RC files.
   if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
     local sudo_home
-    sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6)" || \
-      sudo_home="$(eval echo "~${SUDO_USER}" 2>/dev/null)" || \
-      sudo_home=""
+    sudo_home="$(user_home "${SUDO_USER}")" || sudo_home=""
     if [[ -n "${sudo_home}" ]]; then
       warn "Running under sudo as user ${SUDO_USER}; using ${sudo_home} for shell integration."
       HOME="${sudo_home}"
@@ -945,6 +986,9 @@ main() {
     if [[ "$NO_INIT" == false ]]; then
       [[ "${shells}" == *"bash"* ]] && inject_extensions_rc "${HOME}/.bashrc"
       [[ "${shells}" == *"zsh"* ]]  && inject_extensions_rc "${HOME}/.zshrc"
+      warn "PASSWORD_STORE_ENABLE_EXTENSIONS=true also lets pass load any extension"
+      warn "found inside the password store itself (.extensions/). On a shared or"
+      warn "git-synced store, see Security Notes in the README before relying on it."
     else
       warn "PASSWORD_STORE_ENABLE_EXTENSIONS=true is required for pass to load"
       warn "this extension. Add the following line to your shell RC file:"
