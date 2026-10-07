@@ -1,4 +1,4 @@
-.TH pass-env 1 "2026 September 04" "Version 0.4.0" "User Commands"
+.TH pass-env 1 "2026 October 07" "Version 0.4.1" "User Commands"
 
 .SH NAME
 pass-env \- a password-store extension to manage environment variables from encrypted .env entries
@@ -65,9 +65,9 @@ Decrypt one or more entries and execute
 .I COMMAND
 with the resulting variables set in its environment.  Nothing is written to
 disk and no variable leaks into the calling shell.  This mode provides
-isolation and cleanup (variables are scoped to the subprocess), but does not
-protect against a compromised store: a tampered entry can still set dangerous
-variables like
+isolation and cleanup (variables are scoped to the subprocess and its
+descendants), but does not protect against a compromised store: a tampered
+entry can still set dangerous variables like
 .BR PATH " or " LD_PRELOAD " to hijack the spawned process."
 .PP
 .RS
@@ -79,6 +79,14 @@ pass env run api/openai.env db/prod.env \-\- myapp
 .IP
 When multiple entries define the same variable, later entries override
 earlier ones.
+.IP
+The command inherits the umask pass sets for itself (077 unless
+.B PASSWORD_STORE_UMASK
+is set).  Set
+.B PASSENV_UMASK
+to an octal mask to have the command run under that instead; the
+.B passenv
+shell function does this with the caller's umask automatically.
 .SS Using an entry's variables as command arguments
 A bare
 .I $VAR
@@ -344,16 +352,35 @@ Newlines within values are not supported; a line that does not match
 .I KEY=VALUE
 format triggers an error.
 .IP \(bu 4
+Values are taken literally, unlike in a dotenv library: quotes, backslashes
+and
+.B $
+are part of the value.
+.IP \(bu 4
 Symlinked entries are supported.  A symlink inside the store that resolves
 outside the store will be rejected.
 
 .SH SECURITY
 
-The security of pass-env is bounded by the integrity of your GPG key and
-password store.  If an attacker can write to an entry in your password store
-(via a compromised GPG key, a shared store, or a symlink attack), they can
-inject arbitrary environment variables or execute commands when you load that
-entry.
+The security of pass-env is bounded by the integrity of your password store.
+Entries are encrypted to your public key, which is public, so anyone who can
+write to the store (a shared or git-synced store, a symlink attack, or any
+process running as you) can forge an entry that you will decrypt without
+needing your private key.  Such an entry can inject arbitrary environment
+variables or execute commands when you load it.
+
+A user install sets
+.B PASSWORD_STORE_ENABLE_EXTENSIONS=true
+so that pass can find the extension.  That setting also makes pass load any
+extension found in
+.I .extensions/
+inside the store, ahead of the system copy and without a signature check
+unless
+.B PASSWORD_STORE_SIGNING_KEY
+is set.  On a shared store a writer therefore gets code execution on the next
+.B pass env
+call without touching an entry; prefer a system install there, or set
+.BR PASSWORD_STORE_SIGNING_KEY .
 
 Both
 .BR "pass env set" " and " "pass env run"
@@ -395,6 +422,12 @@ reclaimed and are readable by same-user processes via
 .B PASSWORD_STORE_DIR
 Root directory of the password store.  Defaults to
 .IR ~/.password-store .
+
+.TP
+.B PASSENV_UMASK
+Octal mask applied before
+.B pass env run
+starts the command.  Ignored unless it is three or four octal digits.
 
 .SH SEE ALSO
 .BR pass (1),
