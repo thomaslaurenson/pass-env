@@ -25,19 +25,21 @@ brew install pass fzf
 
 ### Inspect Before Running
 
-Download the installer, optionally verify its checksum against the published release (this protects against accidental transport corruption, not against a compromised release), inspect the script, then run it:
+Download the installer into an empty directory under the name `checksums.txt` lists it by, verify its checksum against the published release (this protects against accidental transport corruption, not against a compromised release), inspect the script, then run it:
 
 ```sh
 BASE_URL="https://github.com/thomaslaurenson/pass-env/releases/latest/download"
-curl -fsSL "$BASE_URL/install.sh" -o /tmp/pass-env-install.sh
-curl -fsSL "$BASE_URL/checksums.txt" -o /tmp/pass-env-checksums.txt
+cd "$(mktemp -d)"
+curl -fsSL --proto '=https' -O "$BASE_URL/install.sh" -O "$BASE_URL/checksums.txt"
 
-sha256sum --check --ignore-missing /tmp/pass-env-checksums.txt
+sha256sum --check --ignore-missing checksums.txt
 
-less /tmp/pass-env-install.sh
+less install.sh
 
-bash /tmp/pass-env-install.sh
+bash install.sh
 ```
+
+On macOS, replace the `sha256sum` line with `shasum -a 256 --check --ignore-missing checksums.txt`.
 
 ### Quick Install
 
@@ -77,6 +79,8 @@ PASSWORD=!d+f$bn1df213
 ```
 
 > **Note:** Values cannot span multiple lines. Newlines within values are not supported. Each line must be a complete `KEY=VALUE` pair.
+
+> **Note:** Values are taken literally, unlike in a dotenv library. Quotes, backslashes and `$` are part of the value, so `PASSWORD="abc"` sets the variable to `"abc"` with the quotes included.
 
 ## Two Ways to Use `pass-env`
 
@@ -196,7 +200,11 @@ See `man pass-env` for full documentation.
 
 ### Trust Boundary
 
-The security of `passenv` is bounded by the integrity of your GPG key and password store. If an attacker can write to an entry in your password store - via a compromised GPG key, a shared store, or a symlink attack - they can inject arbitrary environment variables or execute commands when you load that entry.
+The security of `passenv` is bounded by the integrity of your password store. Entries are encrypted to your public key, which is public, so anyone who can write to the store (a shared or git-synced store, a symlink attack, or any process running as you) can forge an entry that you will decrypt without needing your private key. Such an entry can inject arbitrary environment variables or execute commands when you load it.
+
+### Store-Local Extensions
+
+A user install (`--user`, or any install outside the system extension directory) sets `PASSWORD_STORE_ENABLE_EXTENSIONS=true` in your shell RC file so that pass can find the extension. That setting also makes pass load any extension it finds in `.extensions/` inside the password store, ahead of the system copy, with no signature check unless `PASSWORD_STORE_SIGNING_KEY` is set. On a shared or git-synced store this means a store writer gets code execution on your next `pass env` call without touching an entry. If your store is shared, prefer a system install, or set `PASSWORD_STORE_SIGNING_KEY` so pass verifies `.extensions` and `.gpg-id` before using them.
 
 Both `passenv set` and `pass env run` are affected by a compromised store. The `set` subcommand evaluates entry content as shell code, while `run` exports variables directly into a subprocess, a malicious entry can still set dangerous variables like `PATH` or `LD_PRELOAD` to hijack the spawned process.
 
@@ -218,13 +226,21 @@ Substitution is limited to variable names actually supplied by the named entries
 
 ### Memory Residency
 
-Decrypted pass entry content is held as a bash variable during parsing. Bash provides no mechanism to zero memory on `unset`. On Linux, the decrypted values remain in the process's virtual memory until reclaimed and are readable by same-user processes via `/proc/<pid>/mem`.
+Decrypted pass entry content is held as a bash variable during parsing. Bash provides no mechanism to zero memory on `unset`. On Linux, the decrypted values remain in the process's virtual memory until reclaimed and are readable by same-user processes via `/proc/<pid>/mem`. Parsing reads the content through a pipe rather than a herestring, so it is never backed by a temporary file, which bash before 5.1 would otherwise create for every herestring.
 
 For workloads where this matters, use `pass env run` to inject secrets into a subprocess rather than loading them into the shell with `passenv set`. Secrets are never stored in shell variables when using the `run` subcommand.
 
 ### Environment Visibility
 
-Variables loaded with `passenv set` are visible in the process environment of any child process spawned from that shell. If you need to scope secrets to a single command, use `pass env run` instead.
+Variables loaded with `passenv set` are visible in the process environment of any child process spawned from that shell. `pass env run` narrows that to the command and whatever it spawns in turn: the variables are still in the environment of every descendant of that command, and readable from `/proc/<pid>/environ` by any process running as you while they live. Use `run` to keep secrets out of the shell, not as isolation between the command and its own children.
+
+### Umask
+
+pass sets `umask 077` for its own files before it loads extensions, and a command started by `pass env run` would inherit that and create every file private. `passenv run` forwards your shell's umask to the command through `PASSENV_UMASK`. When calling `pass env run` directly, set `PASSENV_UMASK` yourself, or set `PASSWORD_STORE_UMASK`, which pass honours for everything it runs.
+
+### Reporting
+
+Report a vulnerability privately through GitHub's advisory form; see `SECURITY.md`.
 
 ## Testing
 
@@ -236,7 +252,7 @@ Variables loaded with `passenv set` are visible in the process environment of an
 
 ```bash
 git submodule update --init
-test/extern/bats/bin/bats test/env_bash.bats test/pass_env_init_sh.bats
+test/extern/bats/bin/bats test/
 # OR
 make test
 ```

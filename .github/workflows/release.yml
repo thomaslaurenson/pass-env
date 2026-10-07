@@ -16,19 +16,11 @@ jobs:
       - name: Verify version matches tag
         run: make check_version_tag TAG="${TAG}"
 
-      - name: Build tarball
-        run: git archive --prefix="pass-env-${TAG}/" HEAD | gzip > "pass-env-${TAG}.tar.gz"
-
-      - name: Bake version into install.sh
-        run: |
-          cp scripts/install.sh install.sh
-          sed -i "s/^VERSION=.*/VERSION=\"${TAG}\"/" install.sh
+      - name: Build release artefacts
+        run: make dist TAG="${TAG}"
 
       - name: Extract release notes
         run: make get_changelog TAG="${TAG}" > /tmp/release-notes.md
-
-      - name: Generate checksums
-        run: sha256sum "pass-env-${TAG}.tar.gz" install.sh > checksums.txt
 
       - name: Create GitHub release
         env:
@@ -36,5 +28,4 @@ jobs:
         run: |
           gh release create "${TAG}" \
             --notes-file /tmp/release-notes.md \
-            "pass-env-${TAG}.tar.gz" install.sh checksums.txt
-
+            "dist/pass-env-${TAG}.tar.gz" dist/install.sh dist/checksums.txt

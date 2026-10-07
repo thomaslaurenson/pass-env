@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.1 - 2026-10-07
+
+### Added
+
+- Add a security policy for reporting vulnerabilities privately
+
+### Changed
+
+- Refuse git, ssh, sudo, XDG and editor start-up variables from entries
+- Run commands under the caller's umask instead of the one pass sets
+- Limit the uninstaller's sudo removals to the install directories
+- Document store-local extension loading, literal values and the trust boundary
+
+### Fixed
+
+- Keep decrypted content out of temporary files on bash before 5.1
+- Stop entry content from steering the shell loader's rollback
+- Report the line number instead of the text for an invalid variable name
+- Refuse a user install run as root, fetch over https only, fix the verification steps
+- Keep a symlinked shell rc file intact when uninstalling
+- Grant release write access to the release job only, build artefacts through make
+
 ## 0.4.0 - 2026-09-04
 
 ### Changed

@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-readonly PASSENV_VERSION="0.4.0"
+readonly PASSENV_VERSION="0.4.1"
 
 # Marker line emitted before each entry's exports by the `set` subcommand.
 # contrib/pass-env-init.sh parses these to attribute variables to entries
@@ -77,12 +77,20 @@ _pass_env_is_dangerous_var() {
     # dialect it is running under (contrib/pass-env-init.sh does), and an entry
     # that forges one steers that decision. Nothing legitimate in a .env starts
     # with either prefix.
-    PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|SHELL|HOME|\
+    #
+    # HISTFILE names the file an interactive shell writes its history to on
+    # exit; pointed inside a git-synced store it exfiltrates every command.
+    PATH|IFS|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|SHELL|HOME|HISTFILE|\
     BASH_*|ZSH_*|\
     PROMPT_COMMAND|PS0|PS1|PS2|PS3|PS4|\
     PROMPT|PROMPT2|PROMPT3|PROMPT4|RPROMPT|RPS1|RPS2|SPROMPT|\
     FPATH|ZDOTDIR|CDPATH|\
     GLOBIGNORE|RANDOM|LINENO|PIPESTATUS|DIRSTACK)
+      return 0 ;;
+    # Configuration roots. XDG_CONFIG_HOME is HOME for every tool that reads
+    # ~/.config, so git's core.sshCommand and core.pager can be planted there,
+    # and bash-completion sources completion files from XDG_DATA_HOME on TAB.
+    XDG_CONFIG_HOME|XDG_CONFIG_DIRS|XDG_DATA_HOME|XDG_DATA_DIRS)
       return 0 ;;
     # Dynamic linker / libc
     LD_*|DYLD_*|GCONV_PATH|LOCPATH|TMPDIR|TERMINFO|TERMINFO_DIRS)
@@ -90,16 +98,26 @@ _pass_env_is_dangerous_var() {
     # Programs commonly executed implicitly by other tools. LESSOPEN and
     # LESSCLOSE carry a whole command line rather than a program name: less
     # runs a value beginning with '|' through a shell for every file it opens,
-    # which covers man, git log and anything else that pages.
+    # which covers man, git log and anything else that pages. VIMINIT and
+    # EXINIT hold ex commands that vim runs before anything else at startup.
     PAGER|MANPAGER|EDITOR|VISUAL|BROWSER|\
-    LESSOPEN|LESSCLOSE)
+    LESSOPEN|LESSCLOSE|VIMINIT|EXINIT)
+      return 0 ;;
+    # Programs run to collect a passphrase. ssh runs SSH_ASKPASS for every
+    # prompt once SSH_ASKPASS_REQUIRE=force, so the pair is refused together;
+    # sudo -A runs SUDO_ASKPASS.
+    SSH_ASKPASS|SSH_ASKPASS_REQUIRE|SUDO_ASKPASS)
       return 0 ;;
     # git: variables that name a command git will execute, plus the
     # GIT_CONFIG_* family, which names one indirectly by injecting arbitrary
     # config (core.pager, core.sshCommand, core.fsmonitor, alias.*) into every
-    # git invocation, including ones with no tty and no pager.
+    # git invocation, including ones with no tty and no pager. GIT_EXEC_PATH
+    # is where git looks for every non-builtin subcommand and remote helper,
+    # so git fetch over https runs whatever it finds there; GIT_TEMPLATE_DIR
+    # supplies the hooks copied into every new clone.
     GIT_SSH|GIT_SSH_COMMAND|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|\
     GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|\
+    GIT_EXEC_PATH|GIT_TEMPLATE_DIR|\
     GIT_CONFIG*)
       return 0 ;;
     # pass and GnuPG's own configuration. An entry that sets these turns the
@@ -111,7 +129,7 @@ _pass_env_is_dangerous_var() {
       return 0 ;;
     # Language runtimes: code/path injection on next interpreter start
     PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|\
-    PERL5LIB|PERL5OPT|RUBYLIB|RUBYOPT|\
+    PERL5LIB|PERLLIB|PERL5OPT|RUBYLIB|RUBYOPT|\
     NODE_OPTIONS|NODE_PATH|\
     JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS)
       return 0 ;;
@@ -295,7 +313,8 @@ Notes:
   - ENTRY is optional for run/set/unset; omit it to pick interactively
     with fzf (TAB to multi-select).
   - Entries must contain KEY=VALUE lines (one per line).
-    Blank lines and lines beginning with # are ignored.
+    Blank lines and lines beginning with # are ignored. Values are taken
+    literally: quotes, backslashes and $ are part of the value.
   - When multiple entries define the same variable, later entries
     override earlier ones.
   - `list` prints all .env entries available in the password store.
@@ -374,17 +393,24 @@ _pass_env_list() {
 _pass_env_for_each_var() {
   local _pass_env_entry="$1" _pass_env_callback="$2"
   local _pass_env_content _pass_env_key _pass_env_val _pass_env_line
+  local _pass_env_lineno=0
   _pass_env_content="$(pass show -- "${_pass_env_entry}")" \
     || _pass_env_die "unable to show entry: ${_pass_env_entry}"
+  # Process substitution rather than a herestring: bash before 5.1 backs every
+  # herestring with a temporary file in TMPDIR, which would put the decrypted
+  # entry on disk for the lifetime of the loop.
   while IFS= read -r _pass_env_line; do
+    _pass_env_lineno=$(( _pass_env_lineno + 1 ))
     # Strip trailing CR (handles CRLF files transparently)
     _pass_env_line="${_pass_env_line%$'\r'}"
     [[ -z "${_pass_env_line}" ]] && continue
     case "${_pass_env_line}" in \#*) continue ;; esac
     if [[ "${_pass_env_line}" =~ ^([^=]+)=(.*)$ ]]; then
       _pass_env_key="${BASH_REMATCH[1]}"; _pass_env_val="${BASH_REMATCH[2]}"
+      # Report the line number, not the text: whatever precedes the first '='
+      # on a malformed line is as likely to be a secret as a key name.
       [[ "${_pass_env_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-        || _pass_env_die "invalid variable name in ${_pass_env_entry}: ${_pass_env_key}"
+        || _pass_env_die "invalid variable name in ${_pass_env_entry} (line ${_pass_env_lineno})"
       # Reserved namespace. Without this a key of 'callback' would rebind the
       # dispatch target on the line below and the next line of the entry would
       # be executed as a command; '_PASS_ENV_LOADED_NAMES' would forge the
@@ -399,9 +425,9 @@ _pass_env_for_each_var() {
       fi
       "${_pass_env_callback}" "${_pass_env_key}" "${_pass_env_val}"
     else
-      _pass_env_die "unsupported line format in ${_pass_env_entry} (expected KEY=VALUE)"
+      _pass_env_die "unsupported line format in ${_pass_env_entry} (line ${_pass_env_lineno}, expected KEY=VALUE)"
     fi
-  done <<< "${_pass_env_content}"
+  done < <(printf '%s\n' "${_pass_env_content}")
 }
 
 # Decrypt a pass entry and emit KEY=QUOTEDVAL lines.
@@ -517,9 +543,12 @@ _pass_env_expand_placeholders() {
 # Execute a command with environment variables from one or more pass entries.
 #
 # Builds the command's environment and argument list in explicit stages, then
-# execs. Everything happens inside a subshell, so no variables are written to
-# disk and nothing leaks into the calling shell:
+# execs. Everything happens inside a subshell, so nothing leaks into the
+# calling shell:
 #
+#   0. Apply the caller's umask. pass sets umask 077 for its own files before
+#      sourcing this extension, and the command would otherwise inherit it;
+#      the passenv wrapper forwards the caller's mask in PASSENV_UMASK.
 #   1. Load the entries. Later entries override earlier ones.
 #   2. Apply any leading VAR=value assignments that precede COMMAND. These
 #      override the entries, matching normal shell precedence
@@ -536,6 +565,8 @@ _pass_env_expand_placeholders() {
 #   $@ - ENTRY [ENTRY ...] -- COMMAND [ARGS...]
 #        Entry paths must precede '--'; everything after '--' is the command,
 #        optionally prefixed by VAR=value assignments.
+# Environment:
+#   PASSENV_UMASK - octal mask applied before the command runs (optional)
 # Outputs:
 #   stdout/stderr: forwarded from COMMAND
 # Returns:
@@ -551,6 +582,12 @@ _pass_env_run_with_env() {
   [[ "${#_pass_env_entries[@]}" -ge 1 ]] || _pass_env_die "run: missing ENTRY"
   [[ "$#" -ge 1 ]] || _pass_env_die "run: missing COMMAND"
   (
+    # Stage 0: umask. Read before any entry is loaded so entry content cannot
+    # supply it, and only accept a plain octal mask.
+    if [[ "${PASSENV_UMASK:-}" =~ ^[0-7]{3,4}$ ]]; then
+      umask "${PASSENV_UMASK}"
+    fi
+
     # Stage 1: entries. Locals in this function carry the _pass_env_ prefix
     # because stage 1 exports entry-controlled names into this scope; see
     # _pass_env_for_each_var for the reserved-namespace check that pairs

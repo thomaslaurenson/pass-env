@@ -15,8 +15,8 @@ on:
       - "man/**"
 
 concurrency:
-  group: prerelease
-  cancel-in-progress: true
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
