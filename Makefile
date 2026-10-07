@@ -122,6 +122,22 @@ check_version_tag: ## Verify src/env.bash VERSION matches TAG (e.g. make check_v
 	  exit 1; \
 	fi
 
+# RELEASE
+.PHONY: dist
+dist: ## Build the release artefacts for TAG into dist/ (tarball, baked install.sh, checksums.txt)
+	@tag="$(TAG)"; \
+	if [[ -z "$$tag" ]]; then \
+	  printf 'dist: TAG is empty; pass TAG=v1.0.0 or create a git tag\n' >&2; \
+	  exit 1; \
+	fi; \
+	rm -rf dist && mkdir -p dist; \
+	git archive --prefix="pass-env-$$tag/" HEAD | gzip > "dist/pass-env-$$tag.tar.gz"; \
+	sed "s/^VERSION=.*/VERSION=\"$$tag\"/" scripts/install.sh > dist/install.sh; \
+	chmod 0755 dist/install.sh; \
+	if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi; \
+	(cd dist && $$sum "pass-env-$$tag.tar.gz" install.sh > checksums.txt); \
+	ls -1 dist
+
 # TASKS
 .PHONY: bump_bats
 bump_bats: ## Pin bats submodule to BATS_VERSION (default: v1.13.0)
