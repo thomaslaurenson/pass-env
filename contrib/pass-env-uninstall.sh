@@ -74,9 +74,6 @@ kept()    { status "$YELLOW" KEPT    "$1 ($2)"; }
 #   $2 - Short reason, shown in brackets after the path
 skipped() { status "$GREEN"  SKIPPED "$1 ($2)"; }
 
-# Detected OS; set in main() and reused by portable_sed_inplace.
-_OS=""
-
 # Installation path variables; populated by resolve_paths().
 EXTENSION_DIR=""
 MAN_DIR=""
@@ -159,25 +156,51 @@ resolve_paths() {
   fi
 }
 
-# Remove a file, using sudo when the parent directory is not user-writable.
-# Skips silently when the target does not exist.
+# Report whether a path lies inside one of the resolved install directories.
+#
+# Arguments:
+#   $1 - Absolute path to test
+# Globals:
+#   EXTENSION_DIR, MAN_DIR, BASH_COMP_DIR, ZSH_COMP_DIR, INIT_SCRIPT_DIR - read
+# Returns:
+#   0 when the path is under one of the directories, 1 otherwise
+in_install_dirs() {
+  local path="$1" dir
+  for dir in "$EXTENSION_DIR" "$MAN_DIR" "$BASH_COMP_DIR" "$ZSH_COMP_DIR" "$INIT_SCRIPT_DIR"; do
+    [[ -n "$dir" && "$path" == "${dir}/"* ]] && return 0
+  done
+  return 1
+}
+
+# Remove a file. Skips silently when the target does not exist.
+#
+# sudo is used only when the caller allows it and the parent directory is not
+# user-writable. The caller decides per path rather than this function,
+# because one of the inputs is the install manifest: for a user install it
+# sits in the user's home, where anything running as that user can edit it,
+# and a path it names must never become a root-level rm.
 #
 # Arguments:
 #   $1 - File path to remove
+#   $2 - "sudo" to permit escalation for this path, anything else to forbid it
 # Outputs:
-#   stdout: green [skipped] line when absent; red [removed] line when deleted
+#   stdout: [SKIPPED] when absent, [REMOVED] when deleted, [KEPT] when the
+#           directory is not writable and escalation is not permitted
 # Returns:
 #   0 always
 maybe_rm() {
-  local target="$1"
+  local target="$1" policy="${2:-}"
   if [[ ! -e "$target" ]]; then
     skipped "$target" "not present"
     return 0
   fi
   if [[ -w "$(dirname "$target")" ]]; then
     rm -f "$target"
-  else
+  elif [[ "$policy" == "sudo" ]]; then
     sudo rm -f "$target"
+  else
+    kept "$target" "not writable; remove it with sudo yourself"
+    return 0
   fi
   removed "$target"
 }
@@ -212,27 +235,29 @@ maybe_rmdir() {
   fi
 }
 
-# Run sed -i in a portable way across Linux and macOS.
+# Rewrite a file in place through a temporary copy.
 #
-# macOS sed requires an explicit (possibly empty) backup suffix with -i;
-# GNU sed does not accept one when given as a separate argument.
-# Uses the pre-detected $_OS global rather than re-invoking uname.
+# The final write is a truncating redirection onto the original path, which
+# follows a symlink and keeps the file's inode, owner and mode. sed -i would
+# instead replace a symlinked ~/.bashrc with a plain file and leave the
+# dotfiles target it pointed at untouched.
 #
 # Arguments:
 #   $1 - sed expression
 #   $2 - File to edit in place
-# Globals:
-#   _OS - read; "darwin" selects the macOS form
 # Returns:
-#   exit status of sed
-portable_sed_inplace() {
+#   0 on success, 1 when sed fails (the file is left unchanged)
+rewrite_in_place() {
   local expr="$1"
   local file="$2"
-  if [[ "$_OS" == "darwin" ]]; then
-    sed -i '' "$expr" "$file"
-  else
-    sed -i "$expr" "$file"
+  local tmp
+  tmp="$(mktemp)" || return 1
+  if ! sed "$expr" "$file" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
   fi
+  cat "$tmp" > "$file"
+  rm -f "$tmp"
 }
 
 # Remove every file listed in an install manifest, then the manifest itself.
@@ -243,23 +268,38 @@ portable_sed_inplace() {
 # change between versions. resolve_paths() removal below remains as a
 # fallback for installs performed before the manifest existed.
 #
+# The manifest is data the uninstaller did not write, so it never decides on
+# its own that a path may be removed as root. A user manifest never
+# escalates; a system manifest escalates only for a path inside one of the
+# system install directories resolved by the caller.
+#
 # Arguments:
 #   $1 - Path to the manifest file
+#   $2 - Install type the manifest belongs to: "user" or "system"
+# Globals:
+#   EXTENSION_DIR, MAN_DIR, BASH_COMP_DIR, ZSH_COMP_DIR, INIT_SCRIPT_DIR - read
 # Outputs:
-#   stdout: [removed]/[skipped] line per file
+#   stdout: [REMOVED]/[SKIPPED]/[KEPT] line per file
 # Returns:
 #   0 always (missing manifest is not an error)
 remove_from_manifest() {
   local manifest="$1"
+  local install_type="$2"
   [[ -f "$manifest" ]] || return 0
   info "Removing files listed in ${manifest}"
-  local path
+  local path policy
   while IFS= read -r path; do
     # Only absolute paths; ignore blank or malformed lines defensively.
     [[ -n "$path" && "$path" == /* ]] || continue
-    maybe_rm "$path"
+    policy=""
+    if [[ "$install_type" == "system" ]] && in_install_dirs "$path"; then
+      policy="sudo"
+    fi
+    maybe_rm "$path" "$policy"
   done < "$manifest"
-  maybe_rm "$manifest"
+  policy=""
+  [[ "$install_type" == "system" ]] && policy="sudo"
+  maybe_rm "$manifest" "$policy"
 }
 
 # Sentinel strings used to locate the injected RC block
@@ -310,8 +350,38 @@ strip_rc_block() {
     return 1
   fi
 
-  portable_sed_inplace "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file"
+  rewrite_in_place "/^${sentinel_begin}/,/^${sentinel_end}/d" "$rc_file" \
+    || error "Failed to edit ${rc_file}"
   removed "$display"
+}
+
+# Print the home directory of a local user account.
+#
+# Consults the account database rather than expanding ~user through eval,
+# which would hand the username to the shell as code. The name is checked
+# against the portable username character set first for the same reason.
+# Mirrors the helper of the same name in scripts/install.sh.
+#
+# Arguments:
+#   $1 - Username
+# Outputs:
+#   stdout: absolute home directory path, or nothing when it cannot be found
+# Returns:
+#   0 when a home directory was printed
+#   1 otherwise
+user_home() {
+  local user="$1" home=""
+  [[ "${user}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  if command -v getent &>/dev/null; then
+    home="$(getent passwd "${user}" 2>/dev/null | cut -d: -f6)"
+  elif command -v dscl &>/dev/null; then
+    home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null \
+      | awk '{print $2}')"
+  else
+    home="$(awk -F: -v u="${user}" '$1 == u {print $6}' /etc/passwd 2>/dev/null)"
+  fi
+  [[ -n "${home}" ]] || return 1
+  printf '%s' "${home}"
 }
 
 # Main entry point. Resolves paths for both user and system installs and
@@ -327,9 +397,7 @@ main() {
   # Resolve the invoking user's home so RC file cleanup targets the right files.
   if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
     local sudo_home
-    sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6)" || \
-      sudo_home="$(eval echo "~${SUDO_USER}" 2>/dev/null)" || \
-      sudo_home=""
+    sudo_home="$(user_home "${SUDO_USER}")" || sudo_home=""
     if [[ -n "${sudo_home}" ]]; then
       warn "Running under sudo as user ${SUDO_USER}; using ${sudo_home} for shell integration cleanup."
       HOME="${sudo_home}"
@@ -341,28 +409,32 @@ main() {
     warn "Running as root. Shell integration will be removed from /root's RC files."
   fi
 
-  _OS="$(detect_os)"
-  local os="$_OS"
+  local os
+  os="$(detect_os)"
 
   info "Uninstalling pass-env"
 
   # Manifest-driven removal first (exact list written by install.sh), then
   # the mirrored-path fallback below (idempotent; already-removed files are
-  # reported as [skipped]).
+  # reported as [SKIPPED]). Only the system paths, which this script resolves
+  # itself, may be removed with sudo.
+  local install_type policy
   for install_type in user system; do
     resolve_paths "$os" "$install_type"
-    remove_from_manifest "${INIT_SCRIPT_DIR}/install-manifest.txt"
+    remove_from_manifest "${INIT_SCRIPT_DIR}/install-manifest.txt" "$install_type"
   done
 
   for install_type in user system; do
     resolve_paths "$os" "$install_type"
-    maybe_rm "${EXTENSION_DIR}/env.bash"
+    policy=""
+    [[ "$install_type" == "system" ]] && policy="sudo"
+    maybe_rm "${EXTENSION_DIR}/env.bash" "$policy"
     maybe_rmdir "$EXTENSION_DIR"
-    maybe_rm "${MAN_DIR}/man1/pass-env.1"
-    maybe_rm "${BASH_COMP_DIR}/pass-env"
-    maybe_rm "${ZSH_COMP_DIR}/_pass-env"
-    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-init.sh"
-    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh"
+    maybe_rm "${MAN_DIR}/man1/pass-env.1" "$policy"
+    maybe_rm "${BASH_COMP_DIR}/pass-env" "$policy"
+    maybe_rm "${ZSH_COMP_DIR}/_pass-env" "$policy"
+    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-init.sh" "$policy"
+    maybe_rm "${INIT_SCRIPT_DIR}/pass-env-uninstall.sh" "$policy"
     maybe_rmdir "$INIT_SCRIPT_DIR"
   done
 
@@ -375,4 +447,7 @@ main() {
   warn "Restart your shell to deactivate shell integration."
 }
 
-main "$@"
+# Sourced by the test suite to reach the functions; run as a script otherwise.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
